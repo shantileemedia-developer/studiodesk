@@ -47,8 +47,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
             </p>
             
             <div className="hero-actions">
-              <a 
-                href={exeDownloadUrl || '#'} 
+              <a
+                href={exeDownloadUrl || '#'}
+                target="_blank"
+                rel="noreferrer"
                 className="btn btn-primary"
                 onClick={(e) => {
                   if (!exeDownloadUrl) {

@@ -48,6 +48,7 @@ export interface PoolItem {
 }
 
 export interface DawState {
+  projectName: string;
   tracks: Track[];
   regions: Region[];
   poolItems: PoolItem[];
@@ -107,6 +108,8 @@ export type DawBaseAction =
   | { type: 'SET_SNAP'; payload: { on: boolean; value: string } }
   | { type: 'ADD_POOL_ITEM'; payload: PoolItem }
   | { type: 'REMOVE_POOL_ITEM'; payload: string }
+  | { type: 'UPDATE_AUDIO_URLS'; payload: { poolItemId: string; audioUrl: string } }
+  | { type: 'RENAME_VERSION'; payload: { trackId: string; versionId: string; name: string } }
   | { type: 'UNDO' }
   | { type: 'REDO' }
   | { type: 'RESIZE_TRACK'; payload: { id: string; height: number } }
@@ -160,6 +163,7 @@ const initialTracks: Track[] = [
 ];
 
 export const initialState: DawState = {
+  projectName: 'Untitled Project',
   tracks: initialTracks,
   regions: [],
   poolItems: [],
@@ -437,6 +441,29 @@ function coreReducer(state: DawState, action: DawAction): DawState {
       return { ...state, poolItems: [action.payload, ...state.poolItems] };
     case 'REMOVE_POOL_ITEM':
       return { ...state, poolItems: state.poolItems.filter(p => p.id !== action.payload) };
+
+    case 'UPDATE_AUDIO_URLS': {
+      const { poolItemId, audioUrl } = action.payload;
+      const poolItem = state.poolItems.find(p => p.id === poolItemId);
+      if (!poolItem) return state;
+      return {
+        ...state,
+        poolItems: state.poolItems.map(p => p.id === poolItemId ? { ...p, audioUrl } : p),
+        regions: state.regions.map(r => r.name === poolItem.name ? { ...r, audioUrl } : r),
+      };
+    }
+
+    case 'RENAME_VERSION':
+      return {
+        ...state,
+        tracks: state.tracks.map(t =>
+          t.id === action.payload.trackId
+            ? { ...t, versions: t.versions.map(v =>
+                v.id === action.payload.versionId ? { ...v, name: action.payload.name } : v
+              )}
+            : t
+        ),
+      };
 
     case 'ADD_TRACK_AND_MOVE_REGION': {
       const newTrack = makeTrack('Audio Track', TRACK_COLORS[state.tracks.length % TRACK_COLORS.length], action.payload.trackType ?? 'mono');

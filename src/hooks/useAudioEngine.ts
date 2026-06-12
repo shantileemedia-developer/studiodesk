@@ -335,11 +335,17 @@ export const useAudioEngine = () => {
         }
       }
 
-      // BACKGROUND: Supabase cloud backup — fire and forget, never blocks playback
-      uploadAudioToSupabase(blob, localFileName).catch(() => {});
+      const poolItemId = `pool_${Date.now()}`;
+
+      // BACKGROUND: Supabase cloud backup — once done, update URLs so project.json gets a shareable link
+      uploadAudioToSupabase(blob, localFileName).then(supabaseUrl => {
+        if (supabaseUrl && supabaseUrl !== audioUrl) {
+          dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId, audioUrl: supabaseUrl } });
+        }
+      }).catch(() => {});
 
       const poolItem: PoolItem = {
-        id: `pool_${Date.now()}`,
+        id: poolItemId,
         name,
         audioUrl,
         localFileName,

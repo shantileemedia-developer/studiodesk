@@ -17,6 +17,9 @@ const TrackList = () => {
   const [editName, setEditName]         = useState('');
   const [ctx, setCtx]                   = useState<CtxState | null>(null);
   const [openVersionId, setOpenVersionId] = useState<string | null>(null);
+  const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
+  const [editingVersionTrackId, setEditingVersionTrackId] = useState<string | null>(null);
+  const [editVersionName, setEditVersionName] = useState('');
 
   // Drag state
   const [draggedId, setDraggedId]   = useState<string | null>(null);
@@ -61,7 +64,10 @@ const TrackList = () => {
     if (!track) return addItems;
     const versionItems: ContextMenuItem[] = track.type === 'stereo' ? [
       { label: `＋  New Version  (${track.versions.length})`, onClick: () => dispatch({ type: 'ADD_VERSION', payload: { trackId: track.id } }) },
-      { label: '✏  Rename Version', onClick: () => {/* TODO: version rename */} },
+      { label: '✏  Rename Version', onClick: () => {
+        const v = track.versions.find(v => v.id === track.activeVersionId);
+        if (v) { setEditingVersionId(v.id); setEditingVersionTrackId(track.id); setEditVersionName(v.name); }
+      }},
       { separator: true },
     ] : [];
     return [
@@ -309,7 +315,25 @@ const TrackList = () => {
                           onClick={() => { dispatch({ type: 'SWITCH_VERSION', payload: { trackId: track.id, versionId: v.id } }); setOpenVersionId(null); }}
                         >
                           <span className="version-item-dot" />
-                          {v.name}
+                          {editingVersionId === v.id && editingVersionTrackId === track.id ? (
+                            <input
+                              autoFocus
+                              className="version-rename-input"
+                              value={editVersionName}
+                              onChange={e => setEditVersionName(e.target.value)}
+                              onBlur={() => {
+                                const n = editVersionName.trim();
+                                if (n) dispatch({ type: 'RENAME_VERSION', payload: { trackId: track.id, versionId: v.id, name: n } });
+                                setEditingVersionId(null);
+                              }}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                                if (e.key === 'Escape') { setEditingVersionId(null); }
+                                e.stopPropagation();
+                              }}
+                              onClick={e => e.stopPropagation()}
+                            />
+                          ) : v.name}
                         </div>
                       ))}
                       <div className="version-item add-version"

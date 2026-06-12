@@ -61,6 +61,11 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
 
   useDawSync(roomCode);
 
+  // Keep OS window title in sync with project name
+  useEffect(() => {
+    document.title = `${state.projectName ?? 'Untitled Project'} — StudioDESK`;
+  }, [state.projectName]);
+
   // Play received live stream in a hidden audio element
   useEffect(() => {
     if (liveAudioRef.current && liveRemoteStream) {

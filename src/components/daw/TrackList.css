@@ -161,6 +161,17 @@
   flex-shrink: 0;
 }
 
+.version-rename-input {
+  background: #1a1b1e;
+  border: 1px solid #7c3aed;
+  border-radius: 3px;
+  color: #e2e8f0;
+  font-size: 12px;
+  padding: 1px 4px;
+  width: 100%;
+  outline: none;
+}
+
 .version-item.add-version {
   color: #00ffcc;
   border-top: 1px solid #3a3b3e;

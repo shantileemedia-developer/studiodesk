@@ -3,7 +3,7 @@ import { ZoomIn, ZoomOut, MousePointer2, Crosshair, Scissors, Combine, Eraser, V
 import { useDaw } from '../../context/DawContext';
 import type { ActiveTool, Region, PoolItem } from '../../context/DawContext';
 import WaveformDisplay from './WaveformDisplay';
-import { generatePeaksStereo, uploadAudioToSupabase } from '../../utils/audioUtils';
+import { generatePeaksStereo, uploadAudioToSupabase, saveToAudioFolder } from '../../utils/audioUtils';
 import './ArrangeWindow.css';
 
 const BASE_PX_PER_SEC = 100;
@@ -631,15 +631,11 @@ const ArrangeWindow = () => {
         dispatch({ type: 'ADD_POOL_ITEM', payload: { id: poolItemId, name, audioUrl, localFileName: file.name, duration: buf.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR } });
         dispatch({ type: 'ADD_REGION',    payload: { id: `region_${Date.now()}`, trackId: target.id, versionId: target.activeVersionId, startTime, duration: buf.duration, name, audioUrl, waveformPeaks: peaks, waveformPeaksR: peaksR } });
 
-        // Copy into the project's local Audio/ folder so it persists with the project
+        // Save as 24-bit WAV into the project's Audio/ folder
         if (audioDirHandle) {
           try {
-            // @ts-ignore
-            const fh = await audioDirHandle.getFileHandle(file.name, { create: true });
-            const w = await fh.createWritable();
-            await w.write(file);
-            await w.close();
-          } catch (err) { console.error('Audio folder copy failed:', err); }
+            await saveToAudioFolder(audioDirHandle, name, buf);
+          } catch (err) { console.error('Audio folder save failed:', err); }
         }
 
         // Upload to Supabase in the background and swap in the permanent URL

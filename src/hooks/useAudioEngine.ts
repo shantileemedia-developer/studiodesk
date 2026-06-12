@@ -1,7 +1,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { useDaw } from '../context/DawContext';
 import type { Region, PoolItem } from '../context/DawContext';
-import { generatePeaksStereo, uploadAudioToSupabase } from '../utils/audioUtils';
+import { generatePeaksStereo, uploadAudioToSupabase, saveToAudioFolder } from '../utils/audioUtils';
 import { loadAudioPrefs } from '../components/daw/AudioMIDIPreferencesDialog';
 
 export const useAudioEngine = () => {
@@ -307,13 +307,14 @@ export const useAudioEngine = () => {
       let peaks: number[] = [];
       let peaksR: number[] | null = null;
       let duration = 0;
+      let decodedBuffer: AudioBuffer | null = null;
       try {
         const ab = await blob.arrayBuffer();
-        const audioBuffer = await ctx.decodeAudioData(ab);
-        const stereo = await generatePeaksStereo(audioBuffer);
-        peaks  = stereo.left;
-        peaksR = stereo.right;
-        duration = audioBuffer.duration;
+        decodedBuffer = await ctx.decodeAudioData(ab);
+        const stereo = await generatePeaksStereo(decodedBuffer);
+        peaks    = stereo.left;
+        peaksR   = stereo.right;
+        duration = decodedBuffer.duration;
       } catch {
         duration = currentTimeRef.current - recordingStartDawTimeRef.current;
       }
@@ -322,22 +323,15 @@ export const useAudioEngine = () => {
       const trackName = state.tracks.find(t => t.id === currentTrackId)?.name ?? 'Track';
       const takeNum = state.poolItems.filter(p => p.name.startsWith(trackName)).length + 1;
       const name = `${trackName}_Take_${takeNum}`;
-      const localFileName = `${name}.webm`;
 
       // PRIMARY: blob URL — works instantly, no network dependency
       const audioUrl = URL.createObjectURL(blob);
 
-      // Save to the project's local Audio/ folder (primary on-disk storage)
-      if (audioDirHandle) {
-        try {
-          // @ts-ignore
-          const fileHandle = await audioDirHandle.getFileHandle(localFileName, { create: true });
-          const writable = await fileHandle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-        } catch (err) {
-          console.error(`Local Audio/ save failed for ${localFileName}:`, err);
-        }
+      // Save as 24-bit WAV into the project's Audio/ folder
+      if (audioDirHandle && decodedBuffer) {
+        saveToAudioFolder(audioDirHandle, name, decodedBuffer).catch(err =>
+          console.error(`Audio/ WAV save failed for ${name}:`, err)
+        );
       }
 
       const poolItemId = `pool_${Date.now()}`;
@@ -353,7 +347,7 @@ export const useAudioEngine = () => {
         id: poolItemId,
         name,
         audioUrl,
-        localFileName,
+        localFileName: `${name}.wav`,
         duration,
         createdAt: new Date(),
         waveformPeaks: peaks,

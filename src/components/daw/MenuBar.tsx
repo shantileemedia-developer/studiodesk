@@ -3,6 +3,7 @@ import { useDaw } from '../../context/DawContext';
 import { initialState } from '../../context/DawContext';
 import type { Region, PoolItem } from '../../context/DawContext';
 import { supabase } from '../../lib/supabaseClient';
+import { saveToAudioFolder } from '../../utils/audioUtils';
 import './MenuBar.css';
 
 interface MenuItem {
@@ -235,15 +236,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
             });
           }
         }
-        // Copy into the project's local Audio/ folder
+        // Save as 24-bit WAV into the project's Audio/ folder
         if (audioDirHandle) {
           try {
-            // @ts-ignore
-            const fh = await audioDirHandle.getFileHandle(file.name, { create: true });
-            const w = await fh.createWritable();
-            await w.write(file);
-            await w.close();
-          } catch (err) { console.error('Audio folder copy failed:', err); }
+            await saveToAudioFolder(audioDirHandle, poolItem.name, buf);
+          } catch (err) { console.error('Audio folder save failed:', err); }
         }
         toast(`Imported: ${poolItem.name}`);
       } catch { toast('Could not decode audio file.'); }

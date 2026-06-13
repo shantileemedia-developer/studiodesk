@@ -76,12 +76,10 @@ const MenuBar: React.FC<MenuBarProps> = ({
   const barRef = useRef<HTMLDivElement>(null);
   const clipboardRef = useRef<Region | null>(null);
 
-  const {
-    dispatch, state,
-    setProjectDirHandle, setAudioDirHandle, projectDirHandle, audioDirHandle,
-    currentTimeRef,
-  } = useDaw();
+  const { dispatch, state, setProjectDirHandle, setAudioDirHandle, projectDirHandle, audioDirHandle, currentTimeRef } = useDaw();
   const projectName = state.projectName ?? 'Untitled Project';
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(projectName);
 
   const toast = useCallback((msg: string) => {
     setLocalToast(msg);
@@ -113,7 +111,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
       setProjectDirHandle(dh);
       const adh = await dh.getDirectoryHandle('Audio', { create: true });
       setAudioDirHandle(adh);
-      dispatch({ type: 'SET_STATE', payload: { ...state, projectName: dh.name } });
+      dispatch({ type: 'RENAME_PROJECT', payload: dh.name });
       const fh = await dh.getFileHandle('project.json', { create: true });
       const w = await fh.createWritable();
       await w.write(JSON.stringify({ ...state, projectName: dh.name }, null, 2));
@@ -467,8 +465,41 @@ const MenuBar: React.FC<MenuBarProps> = ({
         </div>
 
         <div className="menu-bar-project">
-          <span className="menu-project-name">{projectName}</span>
+          {editingName ? (
+            <input
+              className="menu-project-name-input"
+              value={nameInput}
+              autoFocus
+              onChange={e => setNameInput(e.target.value)}
+              onBlur={() => {
+                const trimmed = nameInput.trim() || 'Untitled Project';
+                dispatch({ type: 'RENAME_PROJECT', payload: trimmed });
+                setEditingName(false);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                if (e.key === 'Escape') { setNameInput(projectName); setEditingName(false); }
+              }}
+            />
+          ) : (
+            <span
+              className="menu-project-name"
+              title="Double-click to rename project"
+              onDoubleClick={() => { setNameInput(projectName); setEditingName(true); }}
+            >{projectName}</span>
+          )}
         </div>
+
+        {window.electronWindow && (
+          <div className="window-controls">
+            <button className="wc-btn wc-minimize" title="Minimize"
+              onClick={() => window.electronWindow!.minimize()}>─</button>
+            <button className="wc-btn wc-maximize" title="Maximize / Restore"
+              onClick={() => window.electronWindow!.maximize()}>□</button>
+            <button className="wc-btn wc-close" title="Close"
+              onClick={() => window.electronWindow!.close()}>✕</button>
+          </div>
+        )}
       </div>
 
       {/* ── Local toast ── */}
@@ -481,7 +512,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
         <div className="menu-modal-overlay" onClick={() => setShowAbout(false)}>
           <div className="menu-modal" onClick={e => e.stopPropagation()}>
             <h2 className="menu-modal-title">StudioDESK</h2>
-            <p className="menu-modal-version">Version 0.0.0</p>
+            <p className="menu-modal-version">Version 0.1.2</p>
             <p style={{ color: '#aaa', marginTop: 8 }}>
               Professional audio collaboration for recording engineers and artists.<br />
               Built with React 19, Electron 42, and WebRTC.

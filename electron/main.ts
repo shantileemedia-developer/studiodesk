@@ -123,6 +123,14 @@ ipcMain.handle('updater:check', () => {
   if (!isDev) autoUpdater.checkForUpdates().catch(() => {});
 });
 
+// ── IPC: window controls ─────────────────────────────────────────────────────
+ipcMain.handle('window:minimize',  () => mainWindow?.minimize());
+ipcMain.handle('window:maximize',  () => {
+  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+  else mainWindow?.maximize();
+});
+ipcMain.handle('window:close', () => mainWindow?.close());
+
 // ── IPC: OS-level Remote Control (AnyDesk-style) ────────────────────────────
 // Lazy-load nut-js so it doesn't slow down startup if RC is never used
 let nutMouse: any = null;

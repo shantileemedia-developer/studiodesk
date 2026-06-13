@@ -130,7 +130,7 @@
   margin: 4px 0;
 }
 
-/* ── Project name (right side) ───────────── */
+/* ── Project name (center) ───────────── */
 .menu-bar-project {
   position: absolute;
   left: 50%;
@@ -138,7 +138,7 @@
   height: 100%;
   display: flex;
   align-items: center;
-  pointer-events: none;
+  pointer-events: all;  /* allow rename click */
 }
 
 .menu-project-name {
@@ -146,8 +146,29 @@
   color: #606266;
   font-style: italic;
   letter-spacing: 0.2px;
+  cursor: default;
+  padding: 2px 6px;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+.menu-project-name:hover {
+  color: #9a9da8;
+  background: rgba(255,255,255,0.04);
 }
 
+.menu-project-name-input {
+  font-size: 11px;
+  font-style: italic;
+  color: #fff;
+  background: #2a2b2e;
+  border: 1px solid #00ffcc44;
+  border-radius: 3px;
+  padding: 2px 8px;
+  outline: none;
+  width: 200px;
+  text-align: center;
+  font-family: inherit;
+}
 
 /* Compact on small-height screens */
 @media (max-height: 820px) {
@@ -339,3 +360,39 @@
   text-align: right;
 }
 .setup-input:focus { outline: none; border-color: #00ffcc44; }
+
+/* ── Window control buttons (Electron — replaces native title bar controls) ── */
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.wc-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #a0a0a0;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.wc-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.wc-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+

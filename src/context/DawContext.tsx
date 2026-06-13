@@ -160,7 +160,7 @@ const makeTrack = (
 
 const initialTracks: Track[] = [
   makeTrack('Playback Track', '#00ffcc', 'stereo', '0'),
-  makeTrack('Audio Track',  '#00ffcc', 'mono',   '1'),
+  makeTrack('Audio Track',  '#ffd700', 'mono',   '1'),
   makeTrack('Audio Track',  '#ff4d4d', 'mono',   '2'),
   makeTrack('Audio Track',  '#4d9fff', 'mono',   '3'),
 ];

@@ -126,10 +126,16 @@ const VerticalFader: React.FC<VerticalFaderProps> = ({
   const cbRef = useRef(onChange); cbRef.current = onChange;
 
   useLayoutEffect(() => {
-    if (trackRef.current) {
-      const h = trackRef.current.getBoundingClientRect().height;
+    const el = trackRef.current;
+    if (!el) return;
+    const measure = () => {
+      const h = el.getBoundingClientRect().height;
       if (h > 0) setTH(h);
-    }
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const capH    = 28;

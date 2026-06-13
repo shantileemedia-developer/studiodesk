@@ -149,6 +149,7 @@ const ArrangeWindow = () => {
     origStartTime: number;
     origDuration: number;
     origAudioOffset: number;
+    origSourceDuration: number | undefined;
     mouseX: number;
   };
   const trimRef = useRef<TrimState | null>(null);
@@ -488,7 +489,11 @@ const ArrangeWindow = () => {
       const dx = (e.clientX - tr.mouseX) / pxPerSecRef.current;
       let preview: { startTime: number; duration: number };
       if (tr.edge === 'right') {
-        const newDur = Math.max(0.1, tr.origDuration + dx);
+        // Cap at the source file's remaining audio (sourceDuration - audioOffset)
+        const maxDur = tr.origSourceDuration != null
+          ? tr.origSourceDuration - tr.origAudioOffset
+          : Infinity;
+        const newDur = Math.min(maxDur, Math.max(0.1, tr.origDuration + dx));
         preview = { startTime: tr.origStartTime, duration: newDur };
       } else {
         // left edge — shift start + audioOffset, shrink duration
@@ -599,6 +604,7 @@ const ArrangeWindow = () => {
             origStartTime: region.startTime,
             origDuration: region.duration,
             origAudioOffset: region.audioOffset ?? 0,
+            origSourceDuration: region.sourceDuration,
             mouseX: e.clientX,
           };
           trimPreviewRef.current = { startTime: region.startTime, duration: region.duration };
@@ -676,7 +682,10 @@ const ArrangeWindow = () => {
             await schedule(next, next.startTime - mergedStart);
 
             const rendered  = await offCtx.startRendering();
-            const { left: peaks, right: peaksR } = await generatePeaksStereo(rendered);
+            const { left: peaks, right: rawPeaksR } = await generatePeaksStereo(rendered);
+            // Only keep stereo peaks if the target track is stereo
+            const glueTrack = tracks.find(t => t.id === region.trackId);
+            const peaksR    = glueTrack?.type === 'stereo' ? rawPeaksR : null;
             const wavAb     = audioBufferToWav(rendered);
             const blobUrl   = URL.createObjectURL(new Blob([wavAb], { type: 'audio/wav' }));
             const stamp     = Date.now();
@@ -687,7 +696,7 @@ const ArrangeWindow = () => {
               payload: {
                 regionIds: [region.id, next.id],
                 newPoolItem: { id: `pool_glue_${stamp}`, name, audioUrl: blobUrl, duration: totalDur, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR },
-                newRegion:   { id: `region_glue_${stamp}`, trackId: region.trackId, versionId: region.versionId, startTime: mergedStart, duration: totalDur, name, audioUrl: blobUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, audioOffset: 0 },
+                newRegion:   { id: `region_glue_${stamp}`, trackId: region.trackId, versionId: region.versionId, startTime: mergedStart, duration: totalDur, name, audioUrl: blobUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, audioOffset: 0, sourceDuration: totalDur },
               },
             });
           } catch (err) {
@@ -834,7 +843,7 @@ const ArrangeWindow = () => {
         const poolItemId = `pool_${Date.now()}`;
 
         dispatch({ type: 'ADD_POOL_ITEM', payload: { id: poolItemId, name, audioUrl, localFileName: file.name, duration: buf.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR } });
-        dispatch({ type: 'ADD_REGION',    payload: { id: `region_${Date.now()}`, trackId: target.id, versionId: target.activeVersionId, startTime, duration: buf.duration, name, audioUrl, waveformPeaks: peaks, waveformPeaksR: peaksR } });
+        dispatch({ type: 'ADD_REGION',    payload: { id: `region_${Date.now()}`, trackId: target.id, versionId: target.activeVersionId, startTime, duration: buf.duration, name, audioUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, sourceDuration: buf.duration } });
 
         // Save as 24-bit WAV into the project's Audio/ folder
         if (audioDirHandle) {

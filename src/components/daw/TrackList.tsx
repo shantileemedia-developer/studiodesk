@@ -92,6 +92,7 @@ const TrackList = () => {
             audioUrl: url,
             waveformPeaks: peaks,
             waveformPeaksR: peaksR ?? undefined,
+            sourceDuration: duration,
           },
         });
         if (audioDirHandle) {

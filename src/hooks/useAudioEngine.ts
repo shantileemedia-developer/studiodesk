@@ -380,6 +380,7 @@ export const useAudioEngine = () => {
         audioUrl,
         waveformPeaks: peaks,
         waveformPeaksR: peaksR,
+        sourceDuration: duration,
       };
 
       dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });

@@ -31,7 +31,8 @@ export interface Region {
   audioUrl: string;
   waveformPeaks: number[];
   waveformPeaksR?: number[] | null;
-  audioOffset?: number;  // seconds into the source file (for split regions)
+  audioOffset?: number;     // seconds into the source file (for split regions)
+  sourceDuration?: number;  // total duration of the source audio file (caps right-trim)
   isMuted?: boolean;
 }
 
@@ -377,24 +378,29 @@ function coreReducer(state: DawState, action: DawAction): DawState {
       if (!orig) return state;
       if (splitTime <= orig.startTime || splitTime >= orig.startTime + orig.duration) return state;
 
-      const leftDur   = splitTime - orig.startTime;
-      const rightDur  = orig.duration - leftDur;
-      const ratio     = leftDur / orig.duration;
-      const peakMid   = Math.floor(orig.waveformPeaks.length * ratio);
-      const stamp     = Date.now();
+      const leftDur    = splitTime - orig.startTime;
+      const rightDur   = orig.duration - leftDur;
+      const ratio      = leftDur / orig.duration;
+      const peakMid    = Math.floor(orig.waveformPeaks.length * ratio);
+      const peakMidR   = orig.waveformPeaksR ? Math.floor(orig.waveformPeaksR.length * ratio) : 0;
+      const stamp      = Date.now();
 
       const left: Region = {
         ...orig, id: `${regionId}_l${stamp}`,
         duration: leftDur,
-        waveformPeaks: orig.waveformPeaks.slice(0, peakMid),
+        waveformPeaks:  orig.waveformPeaks.slice(0, peakMid),
+        waveformPeaksR: orig.waveformPeaksR ? orig.waveformPeaksR.slice(0, peakMidR) : orig.waveformPeaksR,
         audioOffset: orig.audioOffset ?? 0,
+        sourceDuration: orig.sourceDuration,
       };
       const right: Region = {
         ...orig, id: `${regionId}_r${stamp}`,
         startTime: splitTime,
         duration: rightDur,
-        waveformPeaks: orig.waveformPeaks.slice(peakMid),
+        waveformPeaks:  orig.waveformPeaks.slice(peakMid),
+        waveformPeaksR: orig.waveformPeaksR ? orig.waveformPeaksR.slice(peakMidR) : orig.waveformPeaksR,
         audioOffset: (orig.audioOffset ?? 0) + leftDur,
+        sourceDuration: orig.sourceDuration,
       };
 
       const idx = state.regions.findIndex(r => r.id === regionId);

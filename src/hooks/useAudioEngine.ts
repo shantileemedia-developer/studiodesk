@@ -190,8 +190,9 @@ export const useAudioEngine = () => {
     activeSourcesRef.current.forEach(s => { try { s.stop(); } catch { /* already stopped */ } });
     activeSourcesRef.current = [];
     trackAnalysersRef.current = {};
-    trackGainsRef.current = {};
-  }, [trackAnalysersRef, trackGainsRef]);
+    trackGainsRef.current   = {};
+    trackPannersRef.current = {};
+  }, [trackAnalysersRef, trackGainsRef, trackPannersRef]);
 
   // Live fader/mute/pan — push track changes to active audio nodes immediately
   useEffect(() => {
@@ -277,15 +278,23 @@ export const useAudioEngine = () => {
     recordingChunksRef.current = [];
     livePeaksRef.current = [];
 
-    // Tap the mic for live waveform visualization
+    // Tap the mic through the track's monitoring chain (volume + pan)
     const micSource = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
+    const monGain   = ctx.createGain();
+    const monPanner = ctx.createStereoPanner();
+    const analyser  = ctx.createAnalyser();
     analyser.fftSize = 256;
-    micSource.connect(analyser);
-    // Route mic to masterStream for ListenTo
-    if (masterStreamRef.current) micSource.connect(masterStreamRef.current);
+    monGain.gain.value   = isFinite(armedTrack.volume) ? armedTrack.volume : 0.8;
+    monPanner.pan.value  = isFinite(armedTrack.pan)    ? Math.max(-1, Math.min(1, armedTrack.pan)) : 0;
+    micSource.connect(monGain);
+    monGain.connect(monPanner);
+    monPanner.connect(analyser);
+    if (masterStreamRef.current) monPanner.connect(masterStreamRef.current);
+    // Store in refs so live fader/pan moves affect monitoring during recording
+    trackGainsRef.current[armedTrack.id]   = monGain;
+    trackPannersRef.current[armedTrack.id] = monPanner;
     micSourceRef.current = micSource;
-    analyserRef.current = analyser;
+    analyserRef.current  = analyser;
 
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
@@ -313,6 +322,8 @@ export const useAudioEngine = () => {
     mediaRecorder.onstop = async () => {
       if (micSourceRef.current) { micSourceRef.current.disconnect(); micSourceRef.current = null; }
       analyserRef.current = null;
+      delete trackGainsRef.current[armedTrack.id];
+      delete trackPannersRef.current[armedTrack.id];
       stream.getTracks().forEach(t => t.stop());
 
       const blob = new Blob(recordingChunksRef.current, { type: mimeType });

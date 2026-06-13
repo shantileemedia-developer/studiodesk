@@ -354,6 +354,61 @@
 }
 
 /* Responsive */
+
+/* Laptop (1280px and below) — scale down hero, tighten padding */
+@media (max-width: 1280px) {
+  .hero-title {
+    font-size: 52px;
+  }
+
+  .hero-section {
+    gap: 48px;
+    padding: 60px 36px;
+  }
+
+  .features-section,
+  .roles-section,
+  .workflow-section {
+    padding: 60px 36px;
+  }
+
+  .landing-header {
+    padding: 20px 36px;
+  }
+}
+
+/* Small laptop / large tablet (1024px and below) */
+@media (max-width: 1024px) {
+  .hero-title {
+    font-size: 44px;
+  }
+
+  .hero-section {
+    gap: 36px;
+    padding: 48px 28px;
+  }
+
+  .features-section,
+  .roles-section,
+  .workflow-section {
+    padding: 48px 28px;
+  }
+
+  .landing-header {
+    padding: 18px 28px;
+  }
+
+  /* Workflow: tighten step cards on smaller laptops */
+  .workflow-step {
+    padding: 28px 20px;
+  }
+
+  .step-number {
+    font-size: 36px;
+  }
+}
+
+/* Tablet / stacked layout (992px and below) */
 @media (max-width: 992px) {
   .hero-section {
     grid-template-columns: 1fr;
@@ -369,15 +424,54 @@
   .hero-actions {
     justify-content: center;
   }
+
+  .roles-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-steps {
+    flex-direction: column;
+  }
+
+  .workflow-arrow {
+    transform: rotate(90deg);
+  }
+
+  .roles-section,
+  .workflow-section {
+    padding: 60px 24px;
+  }
 }
 
+/* Mobile (768px and below) */
 @media (max-width: 768px) {
   .hero-title {
-    font-size: 48px;
+    font-size: 36px;
   }
 
   .hero-actions {
     flex-direction: column;
+  }
+
+  .features-section,
+  .roles-section,
+  .workflow-section {
+    padding: 48px 20px;
+  }
+
+  .landing-header {
+    padding: 16px 20px;
+    gap: 16px;
+  }
+
+  .landing-nav a {
+    display: none;
+  }
+
+  .footer-content {
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
   }
 }
 
@@ -389,3 +483,165 @@
   line-height: 1.5;
 }
 .smartscreen-note strong { color: #aaa; }
+
+/* Version badge on download button */
+.btn-version {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.65;
+  margin-left: 2px;
+}
+
+/* App preview placeholder (when screenshot.png is missing) */
+.app-preview-placeholder {
+  width: 100%;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #333;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* Roles Section */
+.roles-section {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 80px 48px;
+}
+
+.roles-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+}
+
+.role-card {
+  padding: 40px;
+  transition: transform 0.3s;
+}
+
+.role-card:hover {
+  transform: translateY(-4px);
+}
+
+.role-card-accent {
+  border-color: rgba(0, 255, 204, 0.2);
+  background: rgba(0, 255, 204, 0.04);
+}
+
+.role-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.engineer-icon {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.artist-icon {
+  background: rgba(0, 255, 204, 0.1);
+  border: 1px solid rgba(0, 255, 204, 0.25);
+  color: #00ffcc;
+}
+
+.role-card h3 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.role-card p {
+  color: #888;
+  line-height: 1.6;
+  font-size: 15px;
+  margin-bottom: 24px;
+}
+
+.role-features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.role-features li {
+  font-size: 14px;
+  color: #a0a0a0;
+  padding-left: 20px;
+  position: relative;
+}
+
+.role-features li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: #00ffcc;
+  font-size: 12px;
+  top: 1px;
+}
+
+/* Workflow Section */
+.workflow-section {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 80px 48px;
+}
+
+.workflow-steps {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.workflow-step {
+  flex: 1;
+  padding: 36px 32px;
+  transition: transform 0.3s;
+}
+
+.workflow-step:hover {
+  transform: translateY(-4px);
+}
+
+.step-number {
+  font-size: 48px;
+  font-weight: 800;
+  color: rgba(0, 255, 204, 0.15);
+  line-height: 1;
+  margin-bottom: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-step h3 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.workflow-step p {
+  color: #888;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.workflow-arrow {
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+

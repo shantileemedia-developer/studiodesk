@@ -63,7 +63,7 @@ function App() {
     return (
       <LandingPage
         onLaunchWeb={handleLaunchWeb}
-        exeDownloadUrl="https://github.com/shantileemedia-developer/studiodesk/releases/download/v0.1.0/StudioDESK-Setup-0.1.0.exe"
+        exeDownloadUrl="https://github.com/shantileemedia-developer/studiodesk/releases/download/v0.1.1/StudioDESK-Setup-0.1.1.exe"
       />
     );
   }

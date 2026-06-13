@@ -3,7 +3,7 @@
   "description": "StudioDESK — Professional audio collaboration DAW for recording engineers and artists",
   "author": "Shantel Bradford <shantelbridget93@gmail.com>",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {

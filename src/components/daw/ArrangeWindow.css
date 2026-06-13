@@ -229,6 +229,89 @@
   background-color: #ff6666;
 }
 
+.marker-delete-btn {
+  display: none;
+  background: #991f1f;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 5px;
+  cursor: pointer;
+  border-radius: 0 2px 2px 0;
+  margin-left: 1px;
+}
+.marker-delete-btn:hover { background: #cc2222; }
+.marker-flag:hover .marker-delete-btn { display: block; }
+
+/* Marker name/add dialog */
+.marker-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.marker-dialog {
+  background: #1e1f22;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 20px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.marker-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  letter-spacing: 0.02em;
+}
+.marker-dialog-input {
+  background: #121212;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.marker-dialog-input:focus {
+  border-color: #00ffcc;
+  box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.12);
+}
+.marker-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.marker-dialog-btn {
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 16px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.marker-dialog-btn.cancel {
+  background: #2a2b2e;
+  color: #c0c0c0;
+}
+.marker-dialog-btn.cancel:hover { background: #363739; }
+.marker-dialog-btn.confirm {
+  background: #00ffcc;
+  color: #111;
+}
+.marker-dialog-btn.confirm:hover { background: #00e6b8; }
+
 .arrange-track.track-muted {
   opacity: 0.35;
 }

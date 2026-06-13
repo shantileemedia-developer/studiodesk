@@ -105,14 +105,6 @@
   color: #555;
 }
 
-.inspector-fader-area {
-  padding: 24px 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-
 .fader-track {
   width: 8px;
   height: 150px;
@@ -179,6 +171,65 @@
 
 .inspector-volume-slider::-moz-range-thumb:hover {
   background: #fff;
+}
+
+/* Collapsible chevron */
+.chevron {
+  transition: transform 0.15s ease;
+  transform: rotate(-90deg);
+}
+.chevron.open {
+  transform: rotate(0deg);
+}
+
+/* Vol / Pan row */
+.inspector-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.inspector-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: #666;
+  letter-spacing: 0.05em;
+  min-width: 26px;
+}
+
+.inspector-fader-area {
+  padding: 20px 0 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.inspector-pan-slider {
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #2a2b2e;
+  outline: none;
+  cursor: pointer;
+}
+.inspector-pan-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  background: #00ffcc;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 1px solid #009980;
+}
+.inspector-pan-slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  background: #00ffcc;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 1px solid #009980;
 }
 
 /* ── Responsive scaling ── */

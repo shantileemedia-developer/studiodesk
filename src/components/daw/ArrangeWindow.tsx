@@ -461,14 +461,50 @@ const ArrangeWindow = () => {
     };
   }, [draggingId, dispatch]);
 
-  // Ruler click → seek
-  const handleRulerClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  // ── Ruler pointer drag (Cubase-style scrub) ──────────────────────
+  const rulerDraggingRef = useRef(false);
+  const [markerDialog, setMarkerDialog] = useState<{
+    id: string | null;
+    pendingTime?: number;
+    name: string;
+  } | null>(null);
+
+  const getTimeFromRulerPointer = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const sl = contentScrollRef.current?.scrollLeft ?? 0;
-    const t  = Math.max(0, (e.clientX - rect.left + sl) / pxPerSec);
+    const sl   = contentScrollRef.current?.scrollLeft ?? 0;
+    return Math.max(0, (e.clientX - rect.left + sl) / pxPerSec);
+  }, [pxPerSec]);
+
+  const handleRulerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('.marker-flag')) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    rulerDraggingRef.current = true;
+    const t = getTimeFromRulerPointer(e);
     currentTimeRef.current = t;
     dispatch({ type: 'SET_CURRENT_TIME', payload: t });
-  }, [currentTimeRef, dispatch, pxPerSec]);
+  }, [getTimeFromRulerPointer, currentTimeRef, dispatch]);
+
+  const handleRulerPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!rulerDraggingRef.current) return;
+    const t = getTimeFromRulerPointer(e);
+    currentTimeRef.current = t;
+    dispatch({ type: 'SET_CURRENT_TIME', payload: t });
+  }, [getTimeFromRulerPointer, currentTimeRef, dispatch]);
+
+  const handleRulerPointerUp = useCallback(() => {
+    rulerDraggingRef.current = false;
+  }, []);
+
+  const confirmMarkerDialog = useCallback(() => {
+    if (!markerDialog) return;
+    const name = markerDialog.name.trim() || 'Marker';
+    if (markerDialog.id) {
+      dispatch({ type: 'RENAME_MARKER', payload: { id: markerDialog.id, name } });
+    } else {
+      dispatch({ type: 'ADD_MARKER', payload: { id: `marker_${Date.now()}`, time: markerDialog.pendingTime ?? 0, name } });
+    }
+    setMarkerDialog(null);
+  }, [markerDialog, dispatch]);
 
   // Right-click → mini toolbox
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -689,12 +725,21 @@ const ArrangeWindow = () => {
   return (
     <div className="arrange-window">
       {/* Bar / beat ruler */}
-      <div className="timeline-ruler bar-ruler" onClick={handleRulerClick} onDoubleClick={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const sl = contentScrollRef.current?.scrollLeft ?? 0;
-        const rawTime = Math.max(0, (e.clientX - rect.left + sl) / pxPerSec);
-        dispatch({ type: 'ADD_MARKER', payload: { id: `marker_${Date.now()}`, time: applySnap(rawTime), name: 'Marker' } });
-      }}>
+      <div
+        className="timeline-ruler bar-ruler"
+        style={{ cursor: 'col-resize', userSelect: 'none' }}
+        onPointerDown={handleRulerPointerDown}
+        onPointerMove={handleRulerPointerMove}
+        onPointerUp={handleRulerPointerUp}
+        onPointerCancel={handleRulerPointerUp}
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest('.marker-flag')) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const sl = contentScrollRef.current?.scrollLeft ?? 0;
+          const rawTime = Math.max(0, (e.clientX - rect.left + sl) / pxPerSec);
+          setMarkerDialog({ id: null, pendingTime: applySnap(rawTime), name: '' });
+        }}
+      >
         <div ref={rulerInnerRef} style={{ width: totalWidth, position: 'relative', height: '100%' }}>
           {Array.from({ length: markerCount }, (_, i) => {
             const barX    = i * secondsPerBar * pxPerSec;
@@ -721,12 +766,21 @@ const ArrangeWindow = () => {
 
           {/* Markers */}
           {markers.map(m => (
-            <div key={m.id} className="marker-flag" style={{ left: m.time * pxPerSec, top: 0, position: 'absolute' }}>
+            <div
+              key={m.id}
+              className="marker-flag"
+              style={{ left: m.time * pxPerSec, top: 0, position: 'absolute' }}
+              onPointerDown={e => e.stopPropagation()}
+            >
               <span className="marker-name" onClick={(e) => {
                 e.stopPropagation();
-                const newName = prompt('Enter marker name:', m.name);
-                if (newName) dispatch({ type: 'RENAME_MARKER', payload: { id: m.id, name: newName } });
+                setMarkerDialog({ id: m.id, name: m.name });
               }}>{m.name}</span>
+              <button
+                className="marker-delete-btn"
+                onClick={(e) => { e.stopPropagation(); dispatch({ type: 'REMOVE_MARKER', payload: m.id }); }}
+                title="Remove marker"
+              >×</button>
             </div>
           ))}
 
@@ -737,7 +791,14 @@ const ArrangeWindow = () => {
       </div>
 
       {/* Seconds / Time ruler */}
-      <div className="timeline-ruler time-ruler" onClick={handleRulerClick}>
+      <div
+        className="timeline-ruler time-ruler"
+        style={{ cursor: 'col-resize', userSelect: 'none' }}
+        onPointerDown={handleRulerPointerDown}
+        onPointerMove={handleRulerPointerMove}
+        onPointerUp={handleRulerPointerUp}
+        onPointerCancel={handleRulerPointerUp}
+      >
         <div ref={timeRulerInnerRef} style={{ width: totalWidth, position: 'relative', height: '100%' }}>
           {Array.from({ length: timeTickCount }, (_, i) => {
             const timeSec = i * timeInterval;
@@ -952,6 +1013,37 @@ const ArrangeWindow = () => {
               title={label}
             >{icon}</button>
           ))}
+        </div>
+      )}
+
+      {/* Marker dialog */}
+      {markerDialog !== null && (
+        <div
+          className="marker-dialog-overlay"
+          onMouseDown={() => setMarkerDialog(null)}
+        >
+          <div className="marker-dialog" onMouseDown={e => e.stopPropagation()}>
+            <div className="marker-dialog-title">
+              {markerDialog.id ? 'Rename Marker' : 'Add Marker'}
+            </div>
+            <input
+              className="marker-dialog-input"
+              value={markerDialog.name}
+              placeholder="Marker name"
+              autoFocus
+              onChange={e => setMarkerDialog(d => d ? { ...d, name: e.target.value } : d)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') confirmMarkerDialog();
+                if (e.key === 'Escape') setMarkerDialog(null);
+              }}
+            />
+            <div className="marker-dialog-actions">
+              <button className="marker-dialog-btn cancel" onClick={() => setMarkerDialog(null)}>Cancel</button>
+              <button className="marker-dialog-btn confirm" onClick={confirmMarkerDialog}>
+                {markerDialog.id ? 'Rename' : 'Add'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

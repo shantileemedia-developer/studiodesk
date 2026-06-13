@@ -337,7 +337,7 @@ export const useAudioEngine = () => {
       const poolItemId = `pool_${Date.now()}`;
 
       // BACKGROUND: Supabase cloud backup — once done, update URLs so project.json gets a shareable link
-      uploadAudioToSupabase(blob, localFileName).then(supabaseUrl => {
+      uploadAudioToSupabase(blob, `${name}.wav`).then(supabaseUrl => {
         if (supabaseUrl && supabaseUrl !== audioUrl) {
           dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId, audioUrl: supabaseUrl } });
         }

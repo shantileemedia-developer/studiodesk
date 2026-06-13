@@ -49,6 +49,7 @@ export interface PoolItem {
 
 export interface DawState {
   projectName: string;
+  projectLength: number;
   tracks: Track[];
   regions: Region[];
   poolItems: PoolItem[];
@@ -78,7 +79,7 @@ export interface DawState {
   };
 }
 
-export type ActiveTool = 'select' | 'range' | 'draw' | 'erase' | 'split' | 'glue' | 'mute' | 'zoom';
+export type ActiveTool = 'select' | 'range' | 'draw' | 'erase' | 'split' | 'render' | 'mute' | 'zoom';
 
 export type DawBaseAction =
   | { type: 'SET_PLAYING'; payload: boolean }
@@ -104,7 +105,8 @@ export type DawBaseAction =
   | { type: 'BOUNCE_REGIONS'; payload: { regionIds: string[]; newRegion: Region; newPoolItem: PoolItem } }
   | { type: 'SPLIT_REGION'; payload: { regionId: string; splitTime: number } }
   | { type: 'TOGGLE_REGION_MUTE'; payload: string }
-  | { type: 'GLUE_REGIONS'; payload: string }
+  | { type: 'RENDER_REGIONS'; payload: string }
+  | { type: 'SET_PROJECT_LENGTH'; payload: number }
   | { type: 'SET_SNAP'; payload: { on: boolean; value: string } }
   | { type: 'ADD_POOL_ITEM'; payload: PoolItem }
   | { type: 'REMOVE_POOL_ITEM'; payload: string }
@@ -164,6 +166,7 @@ const initialTracks: Track[] = [
 
 export const initialState: DawState = {
   projectName: 'Untitled Project',
+  projectLength: Number(localStorage.getItem('sd_projectLength') || '0') || 300,
   tracks: initialTracks,
   regions: [],
   poolItems: [],
@@ -412,7 +415,7 @@ function coreReducer(state: DawState, action: DawAction): DawState {
         ),
       };
 
-    case 'GLUE_REGIONS': {
+    case 'RENDER_REGIONS': {
       const region = state.regions.find(r => r.id === action.payload);
       if (!region) return state;
       const next = state.regions
@@ -434,6 +437,8 @@ function coreReducer(state: DawState, action: DawAction): DawState {
           ),
       };
     }
+    case 'SET_PROJECT_LENGTH':
+      return { ...state, projectLength: action.payload };
     case 'SET_SNAP':
       return { ...state, snapOn: action.payload.on, snapValue: action.payload.value };
 

@@ -42,20 +42,15 @@ function saveAudioPrefs(p: AudioPrefs) {
 // ── Constants ───────────────────────────────────────────────────────────────────
 const SAMPLE_RATES = [44100, 48000, 88200, 96000];
 const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048];
-type Tab = 'general' | 'midi-in' | 'midi-out';
 
 // ── Dialog ──────────────────────────────────────────────────────────────────────
 const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { state, dispatch, audioCtxRef } = useDaw();
 
-  const [tab,     setTab]     = useState<Tab>('general');
   const [prefs,   setPrefs]   = useState<AudioPrefs>(loadAudioPrefs);
 
   const [inputDevices,  setInputDevices]  = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
-  const [midiInputs,    setMidiInputs]    = useState<{ id: string; name: string }[]>([]);
-  const [midiOutputs,   setMidiOutputs]   = useState<{ id: string; name: string }[]>([]);
-  const [midiEnabled,   setMidiEnabled]   = useState<Record<string, boolean>>({});
 
   const [engineRunning, setEngineRunning] = useState(false);
   const [latency,       setLatency]       = useState<number | null>(null);
@@ -92,21 +87,6 @@ const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose
     }
   }, [audioCtxRef]);
 
-  // MIDI access
-  useEffect(() => {
-    if (!('requestMIDIAccess' in navigator)) return;
-    (navigator as any).requestMIDIAccess({ sysex: false }).then((access: any) => {
-      const ins: { id: string; name: string }[] = [];
-      const outs: { id: string; name: string }[] = [];
-      access.inputs.forEach((d: any)  => ins.push({ id: d.id,  name: d.name  ?? `MIDI In ${ins.length + 1}` }));
-      access.outputs.forEach((d: any) => outs.push({ id: d.id, name: d.name  ?? `MIDI Out ${outs.length + 1}` }));
-      setMidiInputs(ins);
-      setMidiOutputs(outs);
-      const initial: Record<string, boolean> = {};
-      [...ins, ...outs].forEach(d => { initial[d.id] = true; });
-      setMidiEnabled(initial);
-    }).catch(() => {});
-  }, []);
 
   const set = <K extends keyof AudioPrefs>(k: K, v: AudioPrefs[K]) =>
     setPrefs(p => ({ ...p, [k]: v }));
@@ -200,38 +180,13 @@ const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose
 
         {/* Title bar */}
         <div className="apd-titlebar">
-          <span className="apd-title">Audio/MIDI Preferences</span>
+          <span className="apd-title">Audio Setup</span>
           <button className="apd-close" onClick={onClose}>✕</button>
-        </div>
-
-        {/* Tabs */}
-        <div className="apd-tabs">
-          {(['general', 'midi-in', 'midi-out'] as Tab[]).map(t => (
-            <button key={t} className={`apd-tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-              {t === 'general' ? 'General' : t === 'midi-in' ? 'MIDI In' : 'MIDI Out'}
-            </button>
-          ))}
         </div>
 
         <div className="apd-body">
 
-          {/* ── General Tab ── */}
-          {tab === 'general' && (
-            <div className="apd-general">
-
-              <div className="apd-row">
-                <label>Configuration:</label>
-                <select disabled className="apd-select">
-                  <option>Stereo (2 in-2 out)</option>
-                </select>
-              </div>
-
-              <div className="apd-row">
-                <label>Driver Type:</label>
-                <select disabled className="apd-select">
-                  <option>WebAudio (System)</option>
-                </select>
-              </div>
+          <div className="apd-general">
 
               <div className="apd-row">
                 <label>Audio Device (In):</label>
@@ -427,71 +382,6 @@ const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose
                 Restart Audio Engine
               </button>
             </div>
-          )}
-
-          {/* ── MIDI In Tab ── */}
-          {tab === 'midi-in' && (
-            <div className="apd-midi">
-              <div className="apd-midi-hint">
-                MIDI input devices detected on this system.
-              </div>
-              {midiInputs.length === 0 ? (
-                <div className="apd-midi-empty">No MIDI input devices found.</div>
-              ) : (
-                <table className="apd-midi-table">
-                  <thead>
-                    <tr><th>Device</th><th>Active</th></tr>
-                  </thead>
-                  <tbody>
-                    {midiInputs.map(d => (
-                      <tr key={d.id}>
-                        <td>{d.name}</td>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={midiEnabled[d.id] ?? true}
-                            onChange={e => setMidiEnabled(prev => ({ ...prev, [d.id]: e.target.checked }))}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-
-          {/* ── MIDI Out Tab ── */}
-          {tab === 'midi-out' && (
-            <div className="apd-midi">
-              <div className="apd-midi-hint">
-                MIDI output devices detected on this system.
-              </div>
-              {midiOutputs.length === 0 ? (
-                <div className="apd-midi-empty">No MIDI output devices found.</div>
-              ) : (
-                <table className="apd-midi-table">
-                  <thead>
-                    <tr><th>Device</th><th>Active</th></tr>
-                  </thead>
-                  <tbody>
-                    {midiOutputs.map(d => (
-                      <tr key={d.id}>
-                        <td>{d.name}</td>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={midiEnabled[d.id] ?? true}
-                            onChange={e => setMidiEnabled(prev => ({ ...prev, [d.id]: e.target.checked }))}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
 
         </div>
 

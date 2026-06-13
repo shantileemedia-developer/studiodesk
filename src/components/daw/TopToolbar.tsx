@@ -7,11 +7,11 @@ import { useDaw } from '../../context/DawContext';
 import type { ActiveTool } from '../../context/DawContext';
 import './TopToolbar.css';
 
-const TOOLS: { id: ActiveTool; icon: React.ElementType; label: string; key: string }[] = [
+const TOOLS: { id: ActiveTool; icon: React.ElementType; label: string; key: string; iconStyle?: React.CSSProperties }[] = [
   { id: 'select', icon: MousePointer2, label: 'Object Selection', key: '1' },
   { id: 'range',  icon: Copy,          label: 'Range Selection',  key: '2' },
-  { id: 'split',  icon: Scissors,      label: 'Split',            key: '3' },
-  { id: 'glue',   icon: Combine,       label: 'Glue',             key: '4' },
+  { id: 'split',  icon: Scissors,      label: 'Split',            key: '3', iconStyle: { transform: 'rotate(-90deg)' } },
+  { id: 'render', icon: Combine,       label: 'Render',           key: '4' },
   { id: 'erase',  icon: Eraser,        label: 'Erase',            key: '5' },
   { id: 'zoom',   icon: Search,        label: 'Zoom',             key: '6' },
   { id: 'mute',   icon: VolumeX,       label: 'Mute',             key: '7' },
@@ -19,10 +19,14 @@ const TOOLS: { id: ActiveTool; icon: React.ElementType; label: string; key: stri
 ];
 
 const COLOR_PALETTE = [
-  '#ff4d4d', '#ff7f4d', '#ffb84d', '#ffd700',
-  '#b8ff4d', '#00ffcc', '#4dffb8', '#4db8ff',
-  '#4d9fff', '#7b68ff', '#cc4dff', '#ff4dcf',
-  '#ffffff', '#b0b0b0', '#606060', '#303030',
+  '#ff2222', '#ff4d4d', '#ff7755', '#ff9933',
+  '#ffb84d', '#ffd700', '#e8ff00', '#b8ff4d',
+  '#66ff66', '#00ff88', '#00ffcc', '#00ffff',
+  '#00ccff', '#4db8ff', '#4d9fff', '#4d6fff',
+  '#7b68ff', '#9955ff', '#cc4dff', '#ee44cc',
+  '#ff4dcf', '#ff4499', '#ff2266', '#cc1144',
+  '#994422', '#775533', '#556633', '#336655',
+  '#ffffff', '#d0d0d0', '#808080', '#1a1a1a',
 ];
 
 const SNAP_VALUES = ['Off', '1/1', '1/2', '1/4', '1/8', '1/16', '1/32'];
@@ -75,14 +79,14 @@ const TopToolbar: React.FC<TopToolbarProps> = ({ roomCode, userRole, onlineCount
 
         {/* Tool buttons */}
         <div className="toolbar-section">
-          {TOOLS.map(({ id, icon: Icon, label, key }) => (
+          {TOOLS.map(({ id, icon: Icon, label, key, iconStyle }) => (
             <button
               key={id}
               className={`toolbar-btn ${activeTool === id ? 'active' : ''}`}
               onClick={() => dispatch({ type: 'SET_TOOL', payload: id })}
               title={`${label}  [${key}]`}
             >
-              <Icon size={15} />
+              <Icon size={15} style={iconStyle} />
               <span className="tool-key">{key}</span>
             </button>
           ))}

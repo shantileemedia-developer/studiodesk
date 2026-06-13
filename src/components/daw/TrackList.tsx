@@ -1,14 +1,16 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Mic, Volume2, Plus, GripVertical, ChevronDown, Layers } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
+import type { PoolItem } from '../../context/DawContext';
 import ContextMenu from '../ui/ContextMenu';
 import type { ContextMenuItem } from '../ui/ContextMenu';
+import { saveToAudioFolder, generatePeaksStereo } from '../../utils/audioUtils';
 import './TrackList.css';
 
 interface CtxState { x: number; y: number; trackId: string | null }
 
 const TrackList = () => {
-  const { state, dispatch, trackAnalysersRef } = useDaw();
+  const { state, dispatch, trackAnalysersRef, audioDirHandle, currentTimeRef } = useDaw();
   const { tracks } = state;
 
   const selectedId = state.selectedTrackId;
@@ -48,6 +50,56 @@ const TrackList = () => {
     dispatch({ type: 'UPDATE_TRACK', payload: { id, updates: { [key]: !track[key] } } });
   };
 
+  /* ── import audio ────────────────────────────────────────── */
+  const handleImportToTrack = useCallback((trackId: string) => {
+    const track = tracks.find(t => t.id === trackId);
+    if (!track) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      try {
+        const actx = new AudioContext();
+        const buf = await actx.decodeAudioData(await file.arrayBuffer());
+        const { left: peaks, right: peaksR } = await generatePeaksStereo(buf);
+        const duration = buf.duration;
+        await actx.close();
+        const poolItem: PoolItem = {
+          id: `pool_${Date.now()}`,
+          name: file.name.replace(/\.[^.]+$/, ''),
+          audioUrl: url,
+          localFileName: file.name,
+          duration,
+          createdAt: new Date(),
+          waveformPeaks: peaks,
+          waveformPeaksR: peaksR ?? undefined,
+        };
+        dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
+        dispatch({
+          type: 'ADD_REGION',
+          payload: {
+            id: `r_${Date.now()}`,
+            trackId: track.id,
+            versionId: track.activeVersionId,
+            startTime: currentTimeRef.current,
+            duration,
+            name: poolItem.name,
+            audioUrl: url,
+            waveformPeaks: peaks,
+            waveformPeaksR: peaksR ?? undefined,
+          },
+        });
+        if (audioDirHandle) {
+          try { await saveToAudioFolder(audioDirHandle, poolItem.name, buf); } catch {}
+        }
+      } catch { /* decode failed */ }
+    };
+    input.click();
+  }, [tracks, dispatch, audioDirHandle, currentTimeRef]);
+
   /* ── context menu ────────────────────────────────────────── */
   const openCtx = useCallback((e: React.MouseEvent, trackId: string | null) => {
     e.preventDefault();
@@ -71,7 +123,8 @@ const TrackList = () => {
       { separator: true },
     ] : [];
     return [
-      { label: '✏  Rename Track', onClick: () => startEdit(track.id, track.name) },
+      { label: '✏  Rename Track',        onClick: () => startEdit(track.id, track.name) },
+      { label: '⬇  Import Audio File…',  onClick: () => handleImportToTrack(track.id) },
       ...versionItems,
       ...addItems,
       { separator: true },
@@ -189,7 +242,7 @@ const TrackList = () => {
         {/* Ruler spacer — single unified header spanning bar-ruler (36px) + time-ruler (22px) */}
         <div className="track-ruler-spacer">
           <div className="track-ruler-header">
-            <span>TRACKS</span>
+            <span>TRACK LIST</span>
             <button
               className="add-track-btn"
               onClick={() => dispatch({ type: 'ADD_TRACK', payload: { trackType: 'mono' } })}

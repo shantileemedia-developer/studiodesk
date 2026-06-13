@@ -30,7 +30,7 @@ const TOOL_CURSORS: Record<ActiveTool, string> = {
     `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>`,
     6, 6
   ),
-  glue: svgCursor(
+  render: svgCursor(
     `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 0 1 0 6h-6a3 3 0 0 1 0-6z"/><path d="M6 9H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h10a2 2 0 0 0 2-2v-2"/></svg>`,
     4, 4
   ),
@@ -45,7 +45,7 @@ const MINI_TOOLS: { id: ActiveTool; label: string; icon: React.ReactNode }[] = [
   { id: 'select', label: 'Select [1]',  icon: <MousePointer2 size={15} /> },
   { id: 'range',  label: 'Range [2]',   icon: <Crosshair size={15} /> },
   { id: 'split',  label: 'Split [3]',   icon: <Scissors size={15} /> },
-  { id: 'glue',   label: 'Glue [4]',    icon: <Combine size={15} /> },
+  { id: 'render', label: 'Render [4]',  icon: <Combine size={15} /> },
   { id: 'erase',  label: 'Erase [5]',   icon: <Eraser size={15} /> },
   { id: 'zoom',   label: 'Zoom [6]',    icon: <ZoomIn size={15} /> },
   { id: 'mute',   label: 'Mute [7]',    icon: <VolumeX size={15} /> },
@@ -230,11 +230,21 @@ const ArrangeWindow = () => {
   // G/H zoom anchored to playhead; Shift+G/H = track height; B = bounce; number keys switch tools
   useEffect(() => {
     const toolMap: Record<string, ActiveTool> = {
-      '1':'select','2':'range','3':'split','4':'glue','5':'erase','6':'zoom','7':'mute','8':'draw',
+      '1':'select','2':'range','3':'split','4':'render','5':'erase','6':'zoom','7':'mute','8':'draw',
     };
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      // Ctrl+A: select all audio clips, prevent browser text-selection
+      if ((e.key === 'a' || e.key === 'A') && e.ctrlKey) {
+        e.preventDefault();
+        const allRegions = stateRef.current.regions;
+        if (allRegions.length > 0) {
+          dispatch({ type: 'SELECT_REGION', payload: allRegions[0].id });
+        }
+        return;
+      }
 
       if (e.key === 'h' || e.key === 'H') {
         if (e.shiftKey) {
@@ -505,8 +515,8 @@ const ArrangeWindow = () => {
       case 'mute':
         dispatch({ type: 'TOGGLE_REGION_MUTE', payload: region.id });
         break;
-      case 'glue':
-        dispatch({ type: 'GLUE_REGIONS', payload: region.id });
+      case 'render':
+        dispatch({ type: 'RENDER_REGIONS', payload: region.id });
         break;
       default:
         break;

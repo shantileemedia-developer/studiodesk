@@ -36,13 +36,13 @@ const SHORTCUT_LIST = [
   { key: 'Ctrl+Shift+S',    action: 'Save As…' },
   { key: 'Ctrl+L',          action: 'Toggle Loop' },
   { key: 'Ctrl+M',          action: 'Toggle Metronome' },
-  { key: 'Ctrl+,',          action: 'Preferences' },
-  { key: 'F4',              action: 'Hardware Setup' },
-  { key: 'Delete / Bksp',  action: 'Delete Selected Region' },
+  { key: 'Ctrl+A',          action: 'Select All Clips' },
+  { key: 'F4',              action: 'Audio Setup' },
+  { key: 'Delete / Bksp',  action: 'Delete Selected Clip' },
   { key: '1',               action: 'Select Tool' },
   { key: '2',               action: 'Range Tool' },
   { key: '3',               action: 'Split Tool' },
-  { key: '4',               action: 'Glue Tool' },
+  { key: '4',               action: 'Render Tool' },
   { key: '5',               action: 'Erase Tool' },
   { key: '6',               action: 'Zoom Tool' },
   { key: '7',               action: 'Mute Tool' },
@@ -63,6 +63,15 @@ const MenuBar: React.FC<MenuBarProps> = ({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showNotepad, setShowNotepad] = useState(false);
   const [showProjectSetup, setShowProjectSetup] = useState(false);
+  const [showProjectLength, setShowProjectLength] = useState(false);
+  const [projectLengthMin, setProjectLengthMin] = useState(() => {
+    const saved = localStorage.getItem('sd_projectLength');
+    return saved ? Math.floor(Number(saved) / 60) : 5;
+  });
+  const [projectLengthSec, setProjectLengthSec] = useState(() => {
+    const saved = localStorage.getItem('sd_projectLength');
+    return saved ? Number(saved) % 60 : 0;
+  });
   const [notepadText, setNotepadText] = useState(() => localStorage.getItem('sd_notepad') || '');
   const [projectTempo, setProjectTempo] = useState(0);
 
@@ -320,13 +329,8 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { separator: true, label: '' },
         { label: 'Save',                  shortcut: 'Ctrl+S',       onClick: () => handleSave() },
         { label: 'Save As…',              shortcut: 'Ctrl+Shift+S', onClick: handleSaveAs },
-        { label: 'Save New Version',                                 onClick: handleSaveNewVersion },
         { separator: true, label: '' },
         { label: 'Import Audio File…',                              onClick: handleImportAudio },
-        { separator: true, label: '' },
-        { label: 'Export Audio Mixdown…',                           onClick: onExportMixdown },
-        { separator: true, label: '' },
-        { label: 'Preferences…',                                    onClick: onOpenPreferences },
         { separator: true, label: '' },
         { label: 'Sign Out', onClick: async () => { await supabase.auth.signOut(); window.location.reload(); } },
         { label: 'Quit', shortcut: 'Ctrl+Q', onClick: () => { if (confirm('Quit StudioDESK?')) window.close(); } },
@@ -344,10 +348,8 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { label: 'Paste',       shortcut: 'Ctrl+V', onClick: handlePaste },
         { label: 'Delete',      shortcut: 'Del',    onClick: handleDelete },
         { separator: true, label: '' },
-        { label: 'Select All',  shortcut: 'Ctrl+A', onClick: handleSelectAll },
-        { label: 'Deselect All',                    onClick: () => dispatch({ type: 'SELECT_REGION', payload: null }) },
-        { separator: true, label: '' },
-        { label: 'Preferences…', shortcut: 'Ctrl+,', onClick: onOpenPreferences },
+        { label: 'Select All Clips', shortcut: 'Ctrl+A', onClick: handleSelectAll },
+        { label: 'Deselect All',                         onClick: () => dispatch({ type: 'SELECT_REGION', payload: null }) },
       ],
     },
     {
@@ -358,7 +360,6 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { label: 'Notepad',             onClick: () => setShowNotepad(true) },
         { separator: true, label: '' },
         { label: 'Add Audio Track',     onClick: () => { dispatch({ type: 'ADD_TRACK', payload: { trackType: 'mono' } }); toast('Audio track added.'); } },
-        { label: 'Add MIDI Track',      onClick: () => toast('MIDI tracks coming in a future update.') },
         { label: 'Add Stereo Track',    onClick: () => { dispatch({ type: 'ADD_TRACK', payload: { trackType: 'stereo' } }); toast('Stereo track added.'); } },
         { separator: true, label: '' },
         { label: 'Markers', onClick: () => {
@@ -370,10 +371,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
     {
       label: 'Audio',
       items: [
-        { label: 'Hardware Setup…',       shortcut: 'F4', onClick: onOpenAudioPrefs },
-        { label: 'Driver Configuration…',               onClick: onOpenAudioPrefs },
-        { separator: true, label: '' },
-        { label: 'Plug-ins', onClick: () => toast('VST3 plug-in support coming in a future update.') },
+        { label: 'Audio Setup…', shortcut: 'F4', onClick: onOpenAudioPrefs },
       ],
     },
     {
@@ -390,11 +388,21 @@ const MenuBar: React.FC<MenuBarProps> = ({
       ],
     },
     {
+      label: 'Settings',
+      items: [
+        { label: 'Audio Setup…',      shortcut: 'F4', onClick: onOpenAudioPrefs },
+        { label: 'Shortcuts…',                        onClick: () => setShowShortcuts(true) },
+        { separator: true, label: '' },
+        { label: 'Project Length…',                   onClick: () => setShowProjectLength(true) },
+        { separator: true, label: '' },
+        { label: 'Plug-ins', onClick: () => toast('VST3 plug-in support coming in a future update.') },
+      ],
+    },
+    {
       label: 'Help',
       items: [
         { label: 'Documentation',      onClick: () => window.open('https://github.com/shantileemedia-developer/studiodesk', '_blank') },
-        { label: 'Keyboard Shortcuts…', onClick: () => setShowShortcuts(true) },
-        { label: 'Video Tutorials',     onClick: () => toast('Video tutorials coming soon.') },
+        { label: 'Video Tutorials',    onClick: () => toast('Video tutorials coming soon.') },
         { separator: true, label: '' },
         { label: 'Check for Updates…', onClick: () => window.open('https://github.com/shantileemedia-developer/studiodesk/releases', '_blank') },
         { label: 'About StudioDESK',   onClick: () => setShowAbout(true) },
@@ -587,6 +595,47 @@ const MenuBar: React.FC<MenuBarProps> = ({
                   dispatch({ type: 'SET_TEMPO', payload: projectTempo });
                 }
                 setShowProjectSetup(false);
+              }}>Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Project Length modal ── */}
+      {showProjectLength && (
+        <div className="menu-modal-overlay" onClick={() => setShowProjectLength(false)}>
+          <div className="menu-modal project-setup-modal" onClick={e => e.stopPropagation()}>
+            <h2 className="menu-modal-title">Project Length</h2>
+            <div className="project-setup-rows">
+              <div className="setup-row">
+                <label>Minutes</label>
+                <input
+                  type="number"
+                  className="setup-input"
+                  value={projectLengthMin}
+                  min={0} max={999}
+                  onChange={e => setProjectLengthMin(Math.max(0, parseInt(e.target.value) || 0))}
+                />
+              </div>
+              <div className="setup-row">
+                <label>Seconds</label>
+                <input
+                  type="number"
+                  className="setup-input"
+                  value={projectLengthSec}
+                  min={0} max={59}
+                  onChange={e => setProjectLengthSec(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                />
+              </div>
+            </div>
+            <div className="menu-modal-footer">
+              <button className="menu-modal-btn secondary" onClick={() => setShowProjectLength(false)}>Cancel</button>
+              <button className="menu-modal-btn primary" onClick={() => {
+                const totalSec = projectLengthMin * 60 + projectLengthSec;
+                localStorage.setItem('sd_projectLength', String(totalSec));
+                dispatch({ type: 'SET_PROJECT_LENGTH', payload: totalSec });
+                setShowProjectLength(false);
+                toast(`Project length set to ${projectLengthMin}m ${projectLengthSec}s`);
               }}>Apply</button>
             </div>
           </div>

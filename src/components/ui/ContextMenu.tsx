@@ -25,13 +25,14 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     };
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     // Small delay so the same right-click that opened it doesn't close it
+    // Use capture phase so stopPropagation in child elements can't block dismiss
     const t = setTimeout(() => {
-      document.addEventListener('mousedown', down);
+      document.addEventListener('mousedown', down, true);
       document.addEventListener('keydown', key);
     }, 50);
     return () => {
       clearTimeout(t);
-      document.removeEventListener('mousedown', down);
+      document.removeEventListener('mousedown', down, true);
       document.removeEventListener('keydown', key);
     };
   }, [onClose]);

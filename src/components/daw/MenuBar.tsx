@@ -346,7 +346,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { label: 'Notepad',             onClick: () => setShowNotepad(true) },
         { separator: true, label: '' },
         { label: 'Add Audio Track',     onClick: () => { dispatch({ type: 'ADD_TRACK', payload: { trackType: 'mono' } }); toast('Audio track added.'); } },
-        { label: 'Add Stereo Track',    onClick: () => { dispatch({ type: 'ADD_TRACK', payload: { trackType: 'stereo' } }); toast('Stereo track added.'); } },
+        { label: 'Add Playback Track',  onClick: () => { dispatch({ type: 'ADD_TRACK', payload: { trackType: 'stereo' } }); toast('Playback track added.'); } },
         { separator: true, label: '' },
         { label: 'Markers', onClick: () => {
           dispatch({ type: 'ADD_MARKER', payload: { id: `mk_${Date.now()}`, time: currentTimeRef.current, name: 'Marker' } });

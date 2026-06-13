@@ -158,7 +158,7 @@ const makeTrack = (
 };
 
 const initialTracks: Track[] = [
-  makeTrack('Stereo Track', '#ffb84d', 'stereo', '0'),
+  makeTrack('Playback Track', '#00ffcc', 'stereo', '0'),
   makeTrack('Audio Track',  '#00ffcc', 'mono',   '1'),
   makeTrack('Audio Track',  '#ff4d4d', 'mono',   '2'),
   makeTrack('Audio Track',  '#4d9fff', 'mono',   '3'),
@@ -290,7 +290,7 @@ function coreReducer(state: DawState, action: DawAction): DawState {
     case 'ADD_TRACK': {
       const trackType = action.payload?.trackType ?? 'mono';
       const color = TRACK_COLORS[state.tracks.length % TRACK_COLORS.length];
-      const name = trackType === 'stereo' ? 'Stereo Track' : 'Audio Track';
+      const name = trackType === 'stereo' ? 'Playback Track' : 'Audio Track';
       const newTrack = makeTrack(name, color, trackType);
       // Stereo tracks always inserted at the top
       if (trackType === 'stereo') {

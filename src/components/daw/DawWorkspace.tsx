@@ -19,7 +19,6 @@ import RemoteControlOverlay from './RemoteControlOverlay';
 import MixerPanel from './MixerPanel';
 import AudioMIDIPreferencesDialog from './AudioMIDIPreferencesDialog';
 import { supabase } from '../../lib/supabaseClient';
-import { exportToWav } from '../../utils/exportUtils';
 
 interface DawWorkspaceProps {
   userRole: 'artist' | 'engineer';
@@ -35,7 +34,6 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
   const [toast, setToast] = useState<{ msg: string; id: number } | null>(null);
   const [rcActive, setRcActive] = useState(false);
   const [rcScreenStream, setRcScreenStream] = useState<MediaStream | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
   const sendRcInputRef = useRef<((e: RemoteInputEvent) => void) | null>(null);
   // Persistent subscribed channel ref — avoids the silent-drop bug
   // where supabase.channel() called at send-time creates a fresh, unsubscribed handle

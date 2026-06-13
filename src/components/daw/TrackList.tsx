@@ -109,7 +109,7 @@ const TrackList = () => {
   const buildMenuItems = (trackId: string | null): ContextMenuItem[] => {
     const addItems: ContextMenuItem[] = [
       { label: '＋  Add Mono Audio Track',      onClick: () => dispatch({ type: 'ADD_TRACK', payload: { trackType: 'mono' } }) },
-      { label: '＋  Add Stereo Playback Track', onClick: () => dispatch({ type: 'ADD_TRACK', payload: { trackType: 'stereo' } }) },
+      { label: '＋  Add Playback Track',        onClick: () => dispatch({ type: 'ADD_TRACK', payload: { trackType: 'stereo' } }) },
     ];
     if (!trackId) return addItems;
     const track = tracks.find(t => t.id === trackId);

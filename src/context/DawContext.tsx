@@ -603,6 +603,8 @@ interface DawContextValue {
   trackAnalysersRef: React.MutableRefObject<Record<string, AnalyserNode>>;
   trackGainsRef: React.MutableRefObject<Record<string, GainNode>>;
   trackPannersRef: React.MutableRefObject<Record<string, StereoPannerNode>>;
+  masterGainRef: React.MutableRefObject<GainNode | null>;
+  masterAnalyserRef: React.MutableRefObject<AnalyserNode | null>;
 
   // Local Project storage handles (Chrome/Edge File System Access API)
   projectDirHandle: any | null;
@@ -627,9 +629,11 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
   const recordingStartTimeRef = useRef(0);
   const livePeaksRef = useRef<number[]>([]);
   const masterStreamRef = useRef<MediaStreamAudioDestinationNode | null>(null);
-  const trackAnalysersRef = useRef<Record<string, AnalyserNode>>({});
-  const trackGainsRef     = useRef<Record<string, GainNode>>({});
-  const trackPannersRef   = useRef<Record<string, StereoPannerNode>>({});
+  const trackAnalysersRef  = useRef<Record<string, AnalyserNode>>({});
+  const trackGainsRef      = useRef<Record<string, GainNode>>({});
+  const trackPannersRef    = useRef<Record<string, StereoPannerNode>>({});
+  const masterGainRef      = useRef<GainNode | null>(null);
+  const masterAnalyserRef  = useRef<AnalyserNode | null>(null);
 
   const [projectDirHandle, setProjectDirHandle] = React.useState<any | null>(null);
   const [audioDirHandle, setAudioDirHandle] = React.useState<any | null>(null);
@@ -648,7 +652,7 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
 
   return (
     <DawContext.Provider value={{ 
-      state, dispatch, originalDispatch, setDispatchMiddleware, currentTimeRef, audioCtxRef, recordingStartTimeRef, animFrameRef, masterStreamRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, userRole,
+      state, dispatch, originalDispatch, setDispatchMiddleware, currentTimeRef, audioCtxRef, recordingStartTimeRef, animFrameRef, masterStreamRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, userRole,
       projectDirHandle, setProjectDirHandle, audioDirHandle, setAudioDirHandle
     }}>
       {children}

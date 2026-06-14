@@ -8,7 +8,7 @@ const CLICK_LOOKAHEAD_S = 0.15;  // schedule this many seconds ahead
 const CLICK_INTERVAL_MS = 25;    // scheduler polling interval (ms)
 
 export const useAudioEngine = () => {
-  const { state, dispatch, currentTimeRef, audioCtxRef, recordingStartTimeRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, userRole, masterStreamRef, audioDirHandle } = useDaw();
+  const { state, dispatch, currentTimeRef, audioCtxRef, recordingStartTimeRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, userRole, masterStreamRef, audioDirHandle } = useDaw();
 
   const animFrameRef = useRef<number | null>(null);
   const playStartAudioTimeRef = useRef<number>(0);
@@ -168,6 +168,18 @@ export const useAudioEngine = () => {
 
     dispatch({ type: 'SET_PLAYING', payload: true });
 
+    // Build master bus (gain + analyser) — all tracks route through here
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = isFinite(masterGainRef.current?.gain.value ?? 1) ? (masterGainRef.current?.gain.value ?? 1) : 1;
+    const masterAnalyser = ctx.createAnalyser();
+    masterAnalyser.fftSize = 2048;
+    masterAnalyser.smoothingTimeConstant = 0.75;
+    masterGain.connect(masterAnalyser);
+    masterAnalyser.connect(ctx.destination);
+    if (masterStreamRef.current) masterAnalyser.connect(masterStreamRef.current);
+    masterGainRef.current     = masterGain;
+    masterAnalyserRef.current = masterAnalyser;
+
     // Build per-track mix buses synchronously before any awaits
     const hasSolo = state.tracks.some(t => t.isSolo);
     const playableTracks = new Set(
@@ -192,8 +204,7 @@ export const useAudioEngine = () => {
 
       gain.connect(panner);
       panner.connect(analyser);
-      analyser.connect(ctx.destination);
-      if (masterStreamRef.current) analyser.connect(masterStreamRef.current);
+      analyser.connect(masterGain); // route through master bus
 
       trackBusses[track.id] = { gain, analyser };
       trackAnalysersRef.current[track.id] = analyser;
@@ -326,10 +337,12 @@ export const useAudioEngine = () => {
   const stopSources = useCallback(() => {
     activeSourcesRef.current.forEach(s => { try { s.stop(); } catch { /* already stopped */ } });
     activeSourcesRef.current = [];
-    trackAnalysersRef.current = {};
-    trackGainsRef.current   = {};
-    trackPannersRef.current = {};
-  }, [trackAnalysersRef, trackGainsRef, trackPannersRef]);
+    trackAnalysersRef.current  = {};
+    trackGainsRef.current      = {};
+    trackPannersRef.current    = {};
+    masterGainRef.current      = null;
+    masterAnalyserRef.current  = null;
+  }, [trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef]);
 
   // Live fader/mute/pan — push track changes to active audio nodes immediately
   useEffect(() => {
@@ -568,6 +581,17 @@ export const useAudioEngine = () => {
           .map(t => t.id)
       );
 
+      // Reuse or create master bus for overdub session
+      if (!masterGainRef.current) {
+        const mg = ctx.createGain();
+        mg.gain.value = 1;
+        const ma = ctx.createAnalyser();
+        ma.fftSize = 2048; ma.smoothingTimeConstant = 0.75;
+        mg.connect(ma); ma.connect(ctx.destination);
+        if (masterStreamRef.current) ma.connect(masterStreamRef.current);
+        masterGainRef.current = mg;
+        masterAnalyserRef.current = ma;
+      }
       const trackBusses: Record<string, { gain: GainNode; analyser: AnalyserNode }> = {};
       trackGainsRef.current = {};
       for (const track of state.tracks) {
@@ -578,8 +602,7 @@ export const useAudioEngine = () => {
         analyser.fftSize = 2048;
         analyser.smoothingTimeConstant = 0.75;
         gain.connect(analyser);
-        analyser.connect(ctx.destination);
-        if (masterStreamRef.current) analyser.connect(masterStreamRef.current);
+        analyser.connect(masterGainRef.current);
         trackBusses[track.id] = { gain, analyser };
         trackAnalysersRef.current[track.id] = analyser;
         trackGainsRef.current[track.id]     = gain;

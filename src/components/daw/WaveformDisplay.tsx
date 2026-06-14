@@ -58,16 +58,13 @@ function drawChannel(
   for (let i = botPts.length - 1; i >= 0; i--) ctx.lineTo(botPts[i][0], botPts[i][1]);
   ctx.closePath();
 
-  // Glassmorphism: subtle color tint, glowing stroke, no solid fill
-  ctx.fillStyle = c(0.07);
+  // Dark muted fill — matches mixer channel strip tone
+  ctx.fillStyle = c(0.28);
   ctx.fill();
-  ctx.shadowColor = c(0.7);
-  ctx.shadowBlur = 5;
-  ctx.strokeStyle = c(0.92);
+  ctx.strokeStyle = c(0.65);
   ctx.lineWidth = 1.5;
   ctx.lineJoin = 'round';
   ctx.stroke();
-  ctx.shadowBlur = 0;
 }
 
 function drawWaveform(
@@ -75,7 +72,6 @@ function drawWaveform(
   peaks: number[],
   peaksR: number[] | null | undefined,
   color: string,
-  isSelected: boolean,
 ) {
   const dpr  = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth;
@@ -132,7 +128,7 @@ const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
     const canvas = canvasRef.current;
     if (!canvas || peaks.length === 0) return;
 
-    const render = () => drawWaveform(canvas, peaks, peaksR, color, isSelected);
+    const render = () => drawWaveform(canvas, peaks, peaksR, color);
 
     const ro = new ResizeObserver(render);
     ro.observe(canvas);

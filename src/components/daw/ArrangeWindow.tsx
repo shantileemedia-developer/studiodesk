@@ -395,7 +395,7 @@ const ArrangeWindow = () => {
           // ── Shift+B: track / range bounce ──────────────────────────
           const selectedTrackId = stateRef.current.selectedTrackId;
           const selTrack = tracksRef.current.find(t => t.id === selectedTrackId);
-          if (!selTrack) return;
+          if (!selectedTrackId || !selTrack) return;
 
           const { isLooping, loopStart, loopEnd } = stateRef.current.transport;
           const hasLoop = isLooping && loopEnd > loopStart;
@@ -1620,7 +1620,6 @@ const ArrangeWindow = () => {
                     const isSelected     = selectedRegionId === region.id;
                     const isBeingDragged = draggingId === region.id;
                     const isEdgeHovered  = hoverEdge?.regionId === region.id;
-                    const isStereo       = region.waveformPeaksR && region.waveformPeaksR.length > 0;
 
                     return (
                       <div

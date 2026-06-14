@@ -79,12 +79,13 @@ const panLcdRight = (pan: number): string => {
 
 /* ── Single-column VU meter ──────────────────────────────────────────────────── */
 interface SingleMeterProps {
-  analyserRef: React.MutableRefObject<Record<string, AnalyserNode>>;
-  trackId: string;
+  analyserRef?: React.MutableRefObject<Record<string, AnalyserNode>>;
+  trackId?: string;
+  directAnalyser?: React.MutableRefObject<AnalyserNode | null>;
   channel: 'L' | 'R';
 }
 
-const SingleMeter: React.FC<SingleMeterProps> = ({ analyserRef, trackId, channel }) => {
+const SingleMeter: React.FC<SingleMeterProps> = ({ analyserRef, trackId, directAnalyser, channel }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef  = useRef({ display: -60, peakHold: -60, peakAt: 0 });
 
@@ -97,7 +98,7 @@ const SingleMeter: React.FC<SingleMeterProps> = ({ analyserRef, trackId, channel
     const draw = () => {
       const W = canvas.width, H = canvas.height;
       const s = stateRef.current;
-      const an = analyserRef.current[trackId];
+      const an = directAnalyser ? directAnalyser.current : (analyserRef?.current[trackId ?? ''] ?? null);
       let rawDb = -60;
       if (an) {
         const buf = new Float32Array(an.fftSize);
@@ -123,15 +124,14 @@ const SingleMeter: React.FC<SingleMeterProps> = ({ analyserRef, trackId, channel
       const segs = 40, sh = H / segs, gap = 0.8;
       for (let i = 0; i < segs; i++) {
         const y   = H - (i + 1) * sh;
-        const rel = i / segs;
         const db  = yToDb(y + sh / 2, H);
         const lit = db <= s.display;
         let color: string;
         if (lit) {
-          if (rel > 0.85)       color = '#ff2200';
-          else if (rel > 0.72)  color = '#cc9900';
-          else if (rel > 0.55)  color = '#88bb00';
-          else                  color = '#00aa00';
+          if (db >= -3)        color = '#ff2200';  // near/above 0 dBFS → red
+          else if (db >= -9)   color = '#cc9900';  // -9 to -3 dBFS → amber
+          else if (db >= -18)  color = '#88bb00';  // -18 to -9 dBFS → yellow-green
+          else                 color = '#00aa00';  // below -18 dBFS → green
         } else {
           color = '#071209'; // all unlit segments: uniform dark green
         }
@@ -159,11 +159,12 @@ const SingleMeter: React.FC<SingleMeterProps> = ({ analyserRef, trackId, channel
 
 /* ── Peak dB display (RAF-driven, no React state) ────────────────────────────── */
 interface PeakDisplayProps {
-  analyserRef: React.MutableRefObject<Record<string, AnalyserNode>>;
-  trackId: string;
+  analyserRef?: React.MutableRefObject<Record<string, AnalyserNode>>;
+  trackId?: string;
+  directAnalyser?: React.MutableRefObject<AnalyserNode | null>;
 }
 
-const PeakDisplay: React.FC<PeakDisplayProps> = ({ analyserRef, trackId }) => {
+const PeakDisplay: React.FC<PeakDisplayProps> = ({ analyserRef, trackId, directAnalyser }) => {
   const lRef = useRef<HTMLSpanElement>(null);
   const rRef = useRef<HTMLSpanElement>(null);
   const peakL = useRef(-60), peakR = useRef(-60);
@@ -172,7 +173,7 @@ const PeakDisplay: React.FC<PeakDisplayProps> = ({ analyserRef, trackId }) => {
   useEffect(() => {
     let raf = 0;
     const tick = () => {
-      const an = analyserRef.current[trackId];
+      const an = directAnalyser ? directAnalyser.current : (analyserRef?.current[trackId ?? ''] ?? null);
       const now = performance.now();
       let db = -60;
       if (an) {
@@ -205,7 +206,7 @@ const PeakDisplay: React.FC<PeakDisplayProps> = ({ analyserRef, trackId }) => {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [analyserRef, trackId]);
+  }, [analyserRef, trackId, directAnalyser]);
 
   return (
     <div className="mch-peak-box">
@@ -485,11 +486,10 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({ track, trackAnalysersRef, i
 const MasterStrip: React.FC<{
   vol: number; pan: number;
   onVol: (v: number) => void; onPan: (v: number) => void;
-  analyserRef: React.MutableRefObject<Record<string, AnalyserNode>>;
+  masterAnalyserRef: React.MutableRefObject<AnalyserNode | null>;
   color: string;
   onColorChange: (c: string) => void;
-}> = ({ vol, pan, onVol, onPan, analyserRef, color, onColorChange }) => {
-  const firstKey = Object.keys(analyserRef.current)[0] ?? '__none__';
+}> = ({ vol, pan, onVol, onPan, masterAnalyserRef, color, onColorChange }) => {
   const [showPicker, setShowPicker] = useState(false);
   const [pickerPos, setPickerPos] = useState({ x: 0, y: 0 });
   const swatchRef   = useRef<HTMLDivElement>(null);
@@ -555,13 +555,13 @@ const MasterStrip: React.FC<{
           ))}
         </div>
         <div className="mch-meter-col">
-          <SingleMeter analyserRef={analyserRef} trackId={firstKey} channel="L" />
+          <SingleMeter directAnalyser={masterAnalyserRef} channel="L" />
         </div>
         <div className="mch-fader-col">
           <VerticalFader value={isFinite(vol) ? vol : 0.8} onChange={onVol} isMaster capColor={color} />
         </div>
         <div className="mch-meter-col">
-          <SingleMeter analyserRef={analyserRef} trackId={firstKey} channel="R" />
+          <SingleMeter directAnalyser={masterAnalyserRef} channel="R" />
         </div>
         <div className="mch-meter-scale">
           {DB_SCALE_MARKS.map(m => (
@@ -572,7 +572,7 @@ const MasterStrip: React.FC<{
         </div>
       </div>
 
-      <PeakDisplay analyserRef={analyserRef} trackId={firstKey} />
+      <PeakDisplay directAnalyser={masterAnalyserRef} />
 
       <div className="mch-routing-row">
         <button className="mch-route-arrow">◄</button>
@@ -621,10 +621,17 @@ const MasterStrip: React.FC<{
 
 /* ── Mixer Panel ─────────────────────────────────────────────────────────────── */
 const MixerPanel: React.FC = () => {
-  const { state, dispatch, trackAnalysersRef } = useDaw();
+  const { state, dispatch, trackAnalysersRef, masterGainRef, masterAnalyserRef } = useDaw();
   const [masterVol,   setMasterVol]   = useState(0.8);
   const [masterPan,   setMasterPan]   = useState(0);
   const [masterColor, setMasterColor] = useState('#7072a0');
+
+  // Sync master fader → master gain node whenever it changes
+  useEffect(() => {
+    const gain = masterGainRef.current;
+    if (!gain) return;
+    gain.gain.setTargetAtTime(isFinite(masterVol) ? masterVol : 0.8, gain.context.currentTime, 0.015);
+  }, [masterVol, masterGainRef]);
 
   return (
     <div className="mixer-panel">
@@ -653,7 +660,7 @@ const MixerPanel: React.FC = () => {
         <MasterStrip
           vol={masterVol} pan={masterPan}
           onVol={setMasterVol} onPan={setMasterPan}
-          analyserRef={trackAnalysersRef}
+          masterAnalyserRef={masterAnalyserRef}
           color={masterColor}
           onColorChange={setMasterColor}
         />

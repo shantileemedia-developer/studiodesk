@@ -120,7 +120,6 @@ const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
   color,
   height,
   isPlaying = false,
-  isSelected = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 

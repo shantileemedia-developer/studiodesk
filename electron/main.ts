@@ -6,10 +6,29 @@ import fs from 'fs';
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
 let mainWindow: BrowserWindow | null = null;
+// Last known non-maximized bounds — used to restore correctly after unmaximize
+// on Windows, where calling setBounds() inside the 'maximize' handler clears
+// the OS-level restore point.
+let lastNormalBounds: Electron.Rectangle | null = null;
 
 // ── Persist window bounds across relaunches ───────────────────────────────────
 
 const boundsFile = path.join(app.getPath('userData'), 'window-bounds.json');
+
+/**
+ * Clamp a rectangle so it fits inside the work area of the display it's on.
+ * Prevents the window from appearing behind the taskbar or off-screen after
+ * display configuration changes (disconnected monitor, DPI changes, etc.).
+ * Must only be called after app.whenReady() so electronScreen is available.
+ */
+function clampToWorkArea(b: Electron.Rectangle): Electron.Rectangle {
+  const { workArea } = electronScreen.getDisplayMatching(b);
+  const width  = Math.min(b.width,  workArea.width);
+  const height = Math.min(b.height, workArea.height);
+  const x = Math.max(workArea.x, Math.min(b.x, workArea.x + workArea.width  - width));
+  const y = Math.max(workArea.y, Math.min(b.y, workArea.y + workArea.height - height));
+  return { x, y, width, height };
+}
 
 function loadBounds(): Electron.Rectangle | null {
   try {
@@ -17,13 +36,17 @@ function loadBounds(): Electron.Rectangle | null {
     const b = JSON.parse(raw);
     if (typeof b.x === 'number' && typeof b.y === 'number' &&
         typeof b.width === 'number' && typeof b.height === 'number') {
-      return b as Electron.Rectangle;
+      // Clamp to work area so stale/bad saved bounds never hide the taskbar
+      return clampToWorkArea(b as Electron.Rectangle);
     }
   } catch { /* first launch — no file yet */ }
   return null;
 }
 
 function saveBounds(win: BrowserWindow) {
+  // Never persist bounds while maximized or minimized — those dimensions
+  // are the maximized/minimized state, not the restore size.
+  if (win.isMaximized() || win.isMinimized()) return;
   try {
     fs.writeFileSync(boundsFile, JSON.stringify(win.getBounds()));
   } catch { /* non-fatal */ }
@@ -59,6 +82,33 @@ const createWindow = () => {
   // Persist bounds whenever the user moves or resizes
   mainWindow.on('moved',   () => mainWindow && saveBounds(mainWindow));
   mainWindow.on('resized', () => mainWindow && saveBounds(mainWindow));
+
+  // ── Windows taskbar fix ───────────────────────────────────────────────────
+  // With titleBarStyle:'hidden', maximize() can extend the window behind the
+  // taskbar. We track the last windowed bounds and clamp the maximized window
+  // to the display's work area so the taskbar is always visible.
+  if (process.platform === 'win32') {
+    mainWindow.on('resize', () => {
+      if (mainWindow && !mainWindow.isMaximized() && !mainWindow.isMinimized()) {
+        lastNormalBounds = mainWindow.getBounds();
+      }
+    });
+    mainWindow.on('move', () => {
+      if (mainWindow && !mainWindow.isMaximized() && !mainWindow.isMinimized()) {
+        lastNormalBounds = mainWindow.getBounds();
+      }
+    });
+    mainWindow.on('maximize', () => {
+      if (!mainWindow) return;
+      const { workArea } = electronScreen.getDisplayMatching(mainWindow.getBounds());
+      mainWindow.setBounds(workArea);
+    });
+    mainWindow.on('unmaximize', () => {
+      if (mainWindow && lastNormalBounds) {
+        mainWindow.setBounds(lastNormalBounds);
+      }
+    });
+  }
 
   // ── Crash recovery — auto-reload on renderer crash ───────────────────────
   mainWindow.webContents.on('render-process-gone', (_e, details) => {

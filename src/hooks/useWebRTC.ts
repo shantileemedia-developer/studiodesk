@@ -6,8 +6,7 @@ import type { RemoteInputEvent } from '../types/remote';
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  // Free public TURN servers via Open Relay (Metered) — no sign-up required.
-  // Handles users behind symmetric NAT (corporate networks, strict ISPs).
+  // Free public TURN servers via Open Relay (Metered) — handles symmetric NAT.
   {
     urls: [
       'turn:openrelay.metered.ca:80',
@@ -19,7 +18,6 @@ const ICE_SERVERS: RTCIceServer[] = [
   },
 ];
 
-// Optional: override with a private TURN server via env vars
 if (import.meta.env.VITE_TURN_URL) {
   ICE_SERVERS.push({
     urls: import.meta.env.VITE_TURN_URL as string,
@@ -54,6 +52,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   const [isCalling, setIsCalling] = useState(false);
   const [messages, setMessages] = useState<Array<{ id: string; sender: string; text: string; timestamp: number }>>([]);
 
+  // ── Video call peer connection refs ───────────────────────────────────────
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const signalChannelRef = useRef<RealtimeChannel | null>(null);
@@ -63,6 +62,13 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const screenTrackRef = useRef<MediaStreamTrack | null>(null);
   const onInputEventRef = useRef(onInputEvent);
+
+  // ── RC-only peer connection refs (independent of the video call) ──────────
+  const rcPcRef = useRef<RTCPeerConnection | null>(null);
+  const rcDataChannelRef = useRef<RTCDataChannel | null>(null);
+  const pendingRcIceRef = useRef<RTCIceCandidateInit[]>([]);
+  // Set by startScreenShare so the rc-offer handler can answer with the captured track
+  const handleRcOfferRef = useRef<((offer: RTCSessionDescriptionInit) => Promise<void>) | null>(null);
 
   useEffect(() => { onInputEventRef.current = onInputEvent; }, [onInputEvent]);
 
@@ -107,7 +113,6 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       setIsConnected(s === 'connected');
 
       if (s === 'disconnected') {
-        // Give it 5 s to self-heal before forcing an ICE restart
         reconnectTimer = setTimeout(() => {
           if (pcRef.current?.connectionState === 'disconnected') {
             pcRef.current.restartIce();
@@ -119,15 +124,13 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') {
-        pc.restartIce();
-      }
+      if (pc.iceConnectionState === 'failed') pc.restartIce();
     };
 
-    // Renegotiation — only fires after initial connection for track additions (e.g. screen share)
+    // Renegotiation — only fires after initial connection (e.g. screen share added)
     pc.onnegotiationneeded = async () => {
       if (!channelRef.current) return;
-      if (!pc.currentRemoteDescription) return; // Skip initial — handled in subscribe callback
+      if (!pc.currentRemoteDescription) return;
       if (pc.signalingState !== 'stable') return;
       try {
         const offer = await pc.createOffer();
@@ -155,7 +158,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       });
     }
 
-    // Engineer (initiator) creates DataChannel; Artist receives it via ondatachannel
+    // Engineer creates DataChannel; Artist receives it via ondatachannel
     if (isInitiator) {
       const dc = pc.createDataChannel('rc-input', { ordered: false, maxRetransmits: 0 });
       setupDataChannel(dc);
@@ -167,18 +170,16 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     return pc;
   }, [userId, getDawStream, isInitiator, setupDataChannel]);
 
-  // Background signaling channel — ring/accept/decline/chat and RC signals
+  // ── Background signaling channel — always active while in the room ─────────
   useEffect(() => {
     const channel = supabase.channel(`studiolink_signal_${roomCode}`, {
       config: { broadcast: { self: false } },
     });
     signalChannelRef.current = channel;
 
+    // ── Video call signaling ─────────────────────────────────────────────────
     channel.on('broadcast', { event: 'ring' }, ({ payload }) => {
-      if (!callActiveRef.current) {
-        setIncomingCall(true);
-        setCallerId(payload.from);
-      }
+      if (!callActiveRef.current) { setIncomingCall(true); setCallerId(payload.from); }
     });
     channel.on('broadcast', { event: 'decline' }, () => setIsCalling(false));
     channel.on('broadcast', { event: 'accept' }, () => {
@@ -188,16 +189,89 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     channel.on('broadcast', { event: 'chat' }, ({ payload }) => {
       setMessages(prev => [...prev, payload.message]);
     });
+
+    // ── RC signaling ─────────────────────────────────────────────────────────
+
+    // Artist receives: engineer wants RC
     channel.on('broadcast', { event: 'request-rc' }, () => {
-      if (!isInitiator) setRcRequested(true); // Artist receives this
+      if (!isInitiator) setRcRequested(true);
     });
-    channel.on('broadcast', { event: 'start-rc' }, () => {
-      setRcActive(true);
-      setRcRequested(false);
-    });
+
+    // Either side: RC session ended
     channel.on('broadcast', { event: 'stop-rc' }, () => {
       setRcActive(false);
       setRemoteScreenStream(null);
+      setIsScreenSharing(false);
+      setRcRequested(false);
+      handleRcOfferRef.current = null;
+      if (rcDataChannelRef.current) { rcDataChannelRef.current.close(); rcDataChannelRef.current = null; }
+      if (rcPcRef.current) { rcPcRef.current.close(); rcPcRef.current = null; }
+      pendingRcIceRef.current = [];
+    });
+
+    // Engineer receives: artist accepted → create RC peer connection + offer
+    channel.on('broadcast', { event: 'rc-accepted' }, async () => {
+      if (!isInitiator) return;
+      if (rcPcRef.current) { rcPcRef.current.close(); rcPcRef.current = null; }
+      pendingRcIceRef.current = [];
+
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) channel.send({ type: 'broadcast', event: 'rc-ice', payload: { candidate, from: userId } });
+      };
+
+      pc.ontrack = ({ streams }) => {
+        if (streams[0]) setRemoteScreenStream(streams[0]);
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') { setRcActive(true); setRcRequested(false); }
+        if (pc.connectionState === 'failed') pc.restartIce();
+        if (pc.connectionState === 'closed') { setRcActive(false); setRemoteScreenStream(null); }
+      };
+
+      // Engineer creates the data channel for sending input events to artist
+      const dc = pc.createDataChannel('rc-input', { ordered: false, maxRetransmits: 0 });
+      dc.onmessage = (e) => {
+        try { onInputEventRef.current?.(JSON.parse(e.data)); } catch {}
+      };
+      rcDataChannelRef.current = dc;
+      rcPcRef.current = pc;
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channel.send({ type: 'broadcast', event: 'rc-offer', payload: { offer, from: userId } });
+    });
+
+    // Artist receives: engineer's RC WebRTC offer → handled via ref (screen captured in startScreenShare)
+    channel.on('broadcast', { event: 'rc-offer' }, async ({ payload }) => {
+      if (isInitiator || payload.from === userId) return;
+      await handleRcOfferRef.current?.(payload.offer);
+    });
+
+    // Engineer receives: artist's answer to RC offer
+    channel.on('broadcast', { event: 'rc-answer' }, async ({ payload }) => {
+      if (!isInitiator || payload.from === userId) return;
+      try {
+        await rcPcRef.current?.setRemoteDescription(payload.answer);
+        for (const c of pendingRcIceRef.current) {
+          await rcPcRef.current?.addIceCandidate(c).catch(() => {});
+        }
+        pendingRcIceRef.current = [];
+      } catch (e) { console.error('[RC] rc-answer error', e); }
+    });
+
+    // Both sides: trickle ICE candidates for the RC peer connection
+    channel.on('broadcast', { event: 'rc-ice' }, async ({ payload }) => {
+      if (payload.from === userId) return;
+      try {
+        if (rcPcRef.current?.remoteDescription) {
+          await rcPcRef.current.addIceCandidate(payload.candidate);
+        } else {
+          pendingRcIceRef.current.push(payload.candidate);
+        }
+      } catch {}
     });
 
     channel.subscribe();
@@ -219,41 +293,46 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       });
       channelRef.current = channel;
 
-      // Artist or renegotiation: use existing PC if available
       channel.on('broadcast', { event: 'offer' }, async ({ payload }) => {
         if (payload.from === userId) return;
-        const pc = pcRef.current || createPeerConnection();
-        await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
-        for (const c of pendingCandidatesRef.current) {
-          await pc.addIceCandidate(new RTCIceCandidate(c));
-        }
-        pendingCandidatesRef.current = [];
-        const answer = await pc.createAnswer();
-        if (answer.sdp) {
-          answer.sdp = answer.sdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=1; sprop-stereo=1; maxaveragebitrate=510000');
-        }
-        await pc.setLocalDescription(answer);
-        channel.send({ type: 'broadcast', event: 'answer', payload: { answer, from: userId } });
+        try {
+          const pc = pcRef.current || createPeerConnection();
+          await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
+          for (const c of pendingCandidatesRef.current) {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+          }
+          pendingCandidatesRef.current = [];
+          const answer = await pc.createAnswer();
+          if (answer.sdp) {
+            answer.sdp = answer.sdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=1; sprop-stereo=1; maxaveragebitrate=510000');
+          }
+          await pc.setLocalDescription(answer);
+          channel.send({ type: 'broadcast', event: 'answer', payload: { answer, from: userId } });
+        } catch (err) { console.error('[WebRTC] offer handler error:', err); }
       });
 
       channel.on('broadcast', { event: 'answer' }, async ({ payload }) => {
         if (payload.from === userId) return;
         if (pcRef.current) {
-          await pcRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
-          for (const c of pendingCandidatesRef.current) {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(c));
-          }
-          pendingCandidatesRef.current = [];
+          try {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
+            for (const c of pendingCandidatesRef.current) {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(c));
+            }
+            pendingCandidatesRef.current = [];
+          } catch (err) { console.error('[WebRTC] answer handler error:', err); }
         }
       });
 
       channel.on('broadcast', { event: 'ice-candidate' }, async ({ payload }) => {
         if (payload.from === userId) return;
-        if (pcRef.current && pcRef.current.remoteDescription) {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
-        } else {
-          pendingCandidatesRef.current.push(payload.candidate);
-        }
+        try {
+          if (pcRef.current && pcRef.current.remoteDescription) {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
+          } else {
+            pendingCandidatesRef.current.push(payload.candidate);
+          }
+        } catch (err) { console.error('[WebRTC] ICE candidate error:', err); }
       });
 
       channel.on('broadcast', { event: 'ready' }, async ({ payload }) => {
@@ -298,7 +377,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     setLocalStream(null); setRemoteStream(null); setRemoteDawStream(null); setRemoteScreenStream(null);
     setIsConnected(false); setCallActive(false); callActiveRef.current = false;
     setIsCalling(false); setIncomingCall(false);
-    setIsScreenSharing(false); setRcActive(false); setRcRequested(false);
+    setIsScreenSharing(false);
   }, []);
 
   const ring = useCallback(() => {
@@ -333,61 +412,139 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     if (track) { track.enabled = !track.enabled; setIsVideoOn(track.enabled); }
   }, []);
 
-  // ── Remote Control API ────────────────────────────────────────
+  // ── Remote Control API ────────────────────────────────────────────────────
 
-  // Engineer: request Artist to share their screen
+  // Engineer: send RC request — works without an active call
   const requestRemoteControl = useCallback(() => {
     if (!isInitiator) return;
     signalChannelRef.current?.send({ type: 'broadcast', event: 'request-rc', payload: { from: userId } });
   }, [isInitiator, userId]);
 
-  // Artist: share screen and signal RC is active
+  // Artist: capture screen and set up the RC answer handler, then signal engineer
   const startScreenShare = useCallback(async () => {
-    if (isInitiator) return; // only Artist
-    if (!pcRef.current) { console.warn('No active call to add screen share to'); return; }
+    if (isInitiator) return;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 } as MediaTrackConstraints,
-        audio: false,
-      });
+      let stream: MediaStream;
+
+      if (typeof window !== 'undefined' && window.studioRC) {
+        const sources = await window.studioRC.getScreenSources();
+        if (!sources?.length) throw new Error('No screen sources found');
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sources[0].id,
+              minFrameRate: 30,
+              maxFrameRate: 30,
+            }
+          } as any,
+        });
+      } else {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 30 } as MediaTrackConstraints,
+          audio: false,
+        });
+      }
+
       const track = stream.getVideoTracks()[0];
       screenTrackRef.current = track;
-      pcRef.current.addTrack(track, stream); // triggers onnegotiationneeded → renegotiation
-      track.onended = () => revokeRemoteControl();
       setIsScreenSharing(true);
-      signalChannelRef.current?.send({ type: 'broadcast', event: 'start-rc', payload: { from: userId } });
-    } catch {
-      setRcRequested(false); // User cancelled getDisplayMedia picker
+      setRcRequested(false);
+
+      // Wire up the one-shot offer handler. When rc-offer arrives (from engineer
+      // after receiving rc-accepted), this creates the RC peer connection and answers.
+      handleRcOfferRef.current = async (offer: RTCSessionDescriptionInit) => {
+        if (!screenTrackRef.current) return;
+        handleRcOfferRef.current = null; // one-shot
+
+        try {
+          const trackStream = new MediaStream([screenTrackRef.current]);
+          const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+          pc.onicecandidate = ({ candidate }) => {
+            if (candidate) {
+              signalChannelRef.current?.send({
+                type: 'broadcast', event: 'rc-ice',
+                payload: { candidate, from: userId },
+              });
+            }
+          };
+
+          pc.ondatachannel = (e) => {
+            rcDataChannelRef.current = e.channel;
+            e.channel.onmessage = (msg) => {
+              try { onInputEventRef.current?.(JSON.parse(msg.data)); } catch {}
+            };
+          };
+
+          pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'connected') setRcActive(true);
+            if (pc.connectionState === 'failed') pc.restartIce();
+            if (pc.connectionState === 'closed') { setRcActive(false); setIsScreenSharing(false); }
+          };
+
+          pc.addTrack(screenTrackRef.current, trackStream);
+          rcPcRef.current = pc;
+
+          await pc.setRemoteDescription(offer);
+          for (const c of pendingRcIceRef.current) await pc.addIceCandidate(c).catch(() => {});
+          pendingRcIceRef.current = [];
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          signalChannelRef.current?.send({
+            type: 'broadcast', event: 'rc-answer',
+            payload: { answer, from: userId },
+          });
+
+          setRcActive(true);
+        } catch (e) {
+          console.error('[RC] handleRcOffer error', e);
+          setIsScreenSharing(false);
+        }
+      };
+
+      track.onended = () => revokeRemoteControl();
+
+      // Tell engineer we accepted — they'll send back an rc-offer
+      signalChannelRef.current?.send({ type: 'broadcast', event: 'rc-accepted', payload: { from: userId } });
+
+    } catch (err) {
+      console.error('[RC] Failed to start screen share', err);
+      setRcRequested(false);
+      setIsScreenSharing(false);
     }
-  // revokeRemoteControl is defined below — use ref to avoid circular dep
+  // revokeRemoteControl defined below — ref avoids circular dep
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isInitiator, userId]);
 
-  // Artist: stop sharing screen, revoke RC
+  // Artist: stop sharing and revoke RC
   const revokeRemoteControl = useCallback(() => {
-    if (screenTrackRef.current) {
-      screenTrackRef.current.stop();
-      const sender = pcRef.current?.getSenders().find(s => s.track === screenTrackRef.current);
-      if (sender) pcRef.current?.removeTrack(sender);
-      screenTrackRef.current = null;
-    }
-    setIsScreenSharing(false);
-    setRcActive(false);
-    setRcRequested(false);
+    if (screenTrackRef.current) { screenTrackRef.current.stop(); screenTrackRef.current = null; }
+    if (rcDataChannelRef.current) { rcDataChannelRef.current.close(); rcDataChannelRef.current = null; }
+    if (rcPcRef.current) { rcPcRef.current.close(); rcPcRef.current = null; }
+    pendingRcIceRef.current = [];
+    handleRcOfferRef.current = null;
+    setIsScreenSharing(false); setRcActive(false); setRcRequested(false);
     signalChannelRef.current?.send({ type: 'broadcast', event: 'stop-rc', payload: { from: userId } });
   }, [userId]);
 
-  // Engineer: stop remote control from their side
+  // Engineer: stop RC from their side
   const stopRemoteControl = useCallback(() => {
     if (!isInitiator) return;
-    setRcActive(false);
+    if (rcDataChannelRef.current) { rcDataChannelRef.current.close(); rcDataChannelRef.current = null; }
+    if (rcPcRef.current) { rcPcRef.current.close(); rcPcRef.current = null; }
+    pendingRcIceRef.current = [];
+    setRcActive(false); setRemoteScreenStream(null);
     signalChannelRef.current?.send({ type: 'broadcast', event: 'stop-rc', payload: { from: userId } });
   }, [isInitiator, userId]);
 
-  // Engineer: send an input event over DataChannel to Artist
+  // Engineer: send an input event over the RC DataChannel to Artist
   const sendInputEvent = useCallback((event: RemoteInputEvent) => {
-    if (dataChannelRef.current?.readyState === 'open') {
-      dataChannelRef.current.send(JSON.stringify(event));
+    const dc = rcDataChannelRef.current ?? dataChannelRef.current;
+    if (dc?.readyState === 'open') {
+      dc.send(JSON.stringify(event));
     }
   }, []);
 

@@ -9,6 +9,8 @@ const SYNCABLE_ACTIONS = new Set([
   'ADD_REGION', 'REMOVE_REGION', 'MOVE_REGION', 'SPLIT_REGION', 'TOGGLE_REGION_MUTE', 'RENDER_REGIONS',
   'ADD_POOL_ITEM', 'REMOVE_POOL_ITEM',
   'SET_TEMPO', 'SET_TIME_SIGNATURE',
+  'RENAME_PROJECT',   // project name must sync to all peers
+  'SET_RECORDING',    // recording state indicator shown on both sides
 ]);
 
 export const useDawSync = (roomCode: string) => {
@@ -39,6 +41,7 @@ export const useDawSync = (roomCode: string) => {
           originalDispatch({
             type: 'SET_STATE',
             payload: {
+              ...(parsed.projectName && { projectName: parsed.projectName }),
               ...(parsed.tracks      && { tracks:     parsed.tracks }),
               ...(parsed.regions     && { regions:    parsed.regions }),
               ...(parsed.poolItems   && { poolItems:  parsed.poolItems }),
@@ -117,6 +120,7 @@ export const useDawSync = (roomCode: string) => {
 
     const timer = setTimeout(() => {
       const stateToSave = {
+        projectName: state.projectName,
         tracks:    state.tracks,
         regions:   state.regions,
         poolItems: state.poolItems,

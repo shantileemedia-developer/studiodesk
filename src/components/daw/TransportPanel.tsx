@@ -60,113 +60,119 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
 
   return (
     <div className="transport-panel">
-      {/* Layout toggle — inspector only */}
-      <div className="transport-section">
-        <button className="transport-btn layout-btn" onClick={toggleInspector} title="Toggle Inspector">
-          <LayoutPanelLeft size={18} />
-        </button>
-      </div>
+      {/* Left spacer — mirrors right group width so main controls stay truly centered */}
+      <div className="transport-spacer" />
 
-      {/* Main transport buttons */}
-      <div className="transport-section transport-main">
-        <button className="transport-btn" onClick={onReturnToZero} title="Return to Zero">
-          <SkipBack size={20} fill="currentColor" />
-        </button>
-        <button className="transport-btn" onClick={() => {
-          const end = state.regions.length > 0
-            ? Math.max(...state.regions.map(r => r.startTime + r.duration))
-            : 0;
-          currentTimeRef.current = end;
-          dispatch({ type: 'SET_CURRENT_TIME', payload: end });
-        }} title="Go to End">
-          <SkipForward size={20} fill="currentColor" />
-        </button>
-        <button className="transport-btn stop-btn" onClick={onStop} title="Stop">
-          <Square size={18} fill="currentColor" />
-        </button>
-        <button
-          className={`transport-btn play-btn ${isPlaying && !isRecording ? 'active' : ''}`}
-          onClick={() => { if (!isPlaying) onPlay(); }}
-          title="Play"
-        >
-          <Play size={20} fill="currentColor" />
-        </button>
-        <button
-          className={`transport-btn record-btn ${isRecording ? 'active' : ''}`}
-          onClick={isRecording ? onStop : onRecord}
-          title={isRecording ? 'Stop Recording' : 'Record'}
-        >
-          <Circle size={16} fill="currentColor" />
-        </button>
-        <button
-          className={`transport-btn loop-btn ${isLooping ? 'active' : ''}`}
-          onClick={() => dispatch({ type: 'TOGGLE_LOOP' })}
-          title="Toggle Loop"
-        >
-          <Repeat size={18} />
-        </button>
-      </div>
-
-      {/* Time display — direct DOM updates at 60fps */}
-      <div className="transport-section time-display">
-        <div className="time-primary" ref={timeDisplayRef}>{formatTime(currentTime)}</div>
-        <div className="time-secondary" ref={barsDisplayRef}>{toBarsBeats(currentTime, tempo)}</div>
-      </div>
-
-      {/* Tempo & Signature */}
-      <div className="transport-section tempo-section">
-        <div className="tempo-box">
-          <span className="label">TEMPO</span>
-          <span className="value">{tempo.toFixed(1)}</span>
-        </div>
-        <div className="tempo-box">
-          <span className="label">SIGNATURE</span>
-          <span className="value">{timeSignature[0]}/{timeSignature[1]}</span>
-        </div>
-        <div className={`tempo-box click-box ${state.transport.metronomeOn ? 'active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_METRONOME' })} style={{ cursor: 'pointer' }}>
-          <span className="label">CLICK</span>
-          <span className="value" style={{ color: state.transport.metronomeOn ? '#ff4d4d' : undefined }}>
-            {state.transport.metronomeOn ? 'ON' : 'OFF'}
-          </span>
-        </div>
-        <div className={`tempo-box click-box ${state.transport.countInBars > 0 ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_COUNT_IN', payload: state.transport.countInBars === 0 ? 1 : 0 })} style={{ cursor: 'pointer' }}>
-          <span className="label">COUNT</span>
-          <span className="value">
-            {state.transport.countInBars > 0 ? `${state.transport.countInBars}B` : 'OFF'}
-          </span>
-        </div>
-      </div>
-
-      {/* Perf meter */}
-      <div className="transport-section perf-meter">
-        <Activity size={14} color="#a0a0a0" />
-        <div className="meter-bar">
-          <div className="meter-fill" style={{ width: isPlaying ? '35%' : '5%' }} />
-        </div>
-      </div>
-
-      {/* Stream / ListenTo section */}
-      <div className={`transport-section stream-section ${isStreaming ? 'streaming' : ''} ${isReceiving ? 'receiving' : ''}`}>
-        {userRole === 'artist' ? (
-          <button
-            className={`stream-btn ${isStreaming ? 'active' : ''}`}
-            onClick={onToggleStream}
-            title={isStreaming ? 'Stop streaming output' : 'Stream stereo output live'}
-          >
-            <Radio size={13} />
-            <span className="stream-label">{isStreaming ? 'LIVE' : 'STREAM'}</span>
-            {isStreaming && <span className="stream-live-dot" />}
+      {/* Center: all main transport controls */}
+      <div className="transport-main-controls">
+        {/* Layout toggle */}
+        <div className="transport-section">
+          <button className="transport-btn layout-btn" onClick={toggleInspector} title="Toggle Inspector">
+            <LayoutPanelLeft size={18} />
           </button>
-        ) : (
-          <div className={`stream-rx-indicator ${isReceiving ? 'active' : ''}`}>
-            <span className={`stream-live-dot ${isReceiving ? 'active' : ''}`} />
-            <span className="stream-label">{isReceiving ? 'ARTIST LIVE' : 'NO STREAM'}</span>
+        </div>
+
+        {/* Playback buttons */}
+        <div className="transport-section transport-main">
+          <button className="transport-btn" onClick={onReturnToZero} title="Return to Zero">
+            <SkipBack size={20} fill="currentColor" />
+          </button>
+          <button className="transport-btn" onClick={() => {
+            const end = state.regions.length > 0
+              ? Math.max(...state.regions.map(r => r.startTime + r.duration))
+              : 0;
+            currentTimeRef.current = end;
+            dispatch({ type: 'SET_CURRENT_TIME', payload: end });
+          }} title="Go to End">
+            <SkipForward size={20} fill="currentColor" />
+          </button>
+          <button className="transport-btn stop-btn" onClick={onStop} title="Stop">
+            <Square size={18} fill="currentColor" />
+          </button>
+          <button
+            className={`transport-btn play-btn ${isPlaying && !isRecording ? 'active' : ''}`}
+            onClick={() => { if (!isPlaying) onPlay(); }}
+            title="Play"
+          >
+            <Play size={20} fill="currentColor" />
+          </button>
+          <button
+            className={`transport-btn record-btn ${isRecording ? 'active' : ''}`}
+            onClick={isRecording ? onStop : onRecord}
+            title={isRecording ? 'Stop Recording' : 'Record'}
+          >
+            <Circle size={16} fill="currentColor" />
+          </button>
+          <button
+            className={`transport-btn loop-btn ${isLooping ? 'active' : ''}`}
+            onClick={() => dispatch({ type: 'TOGGLE_LOOP' })}
+            title="Toggle Loop"
+          >
+            <Repeat size={18} />
+          </button>
+        </div>
+
+        {/* Time display — direct DOM updates at 60fps */}
+        <div className="transport-section time-display">
+          <div className="time-primary" ref={timeDisplayRef}>{formatTime(currentTime)}</div>
+          <div className="time-secondary" ref={barsDisplayRef}>{toBarsBeats(currentTime, tempo)}</div>
+        </div>
+
+        {/* Tempo & Signature */}
+        <div className="transport-section tempo-section">
+          <div className="tempo-box">
+            <span className="label">TEMPO</span>
+            <span className="value">{tempo.toFixed(1)}</span>
           </div>
-        )}
+          <div className="tempo-box">
+            <span className="label">SIGNATURE</span>
+            <span className="value">{timeSignature[0]}/{timeSignature[1]}</span>
+          </div>
+          <div className={`tempo-box click-box ${state.transport.metronomeOn ? 'active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_METRONOME' })} style={{ cursor: 'pointer' }}>
+            <span className="label">CLICK</span>
+            <span className="value" style={{ color: state.transport.metronomeOn ? '#ff4d4d' : undefined }}>
+              {state.transport.metronomeOn ? 'ON' : 'OFF'}
+            </span>
+          </div>
+          <div className={`tempo-box click-box ${state.transport.countInBars > 0 ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_COUNT_IN', payload: state.transport.countInBars === 0 ? 1 : 0 })} style={{ cursor: 'pointer' }}>
+            <span className="label">COUNT</span>
+            <span className="value">
+              {state.transport.countInBars > 0 ? `${state.transport.countInBars}B` : 'OFF'}
+            </span>
+          </div>
+        </div>
+
+        {/* Perf meter */}
+        <div className="transport-section perf-meter">
+          <Activity size={14} color="#a0a0a0" />
+          <div className="meter-bar">
+            <div className="meter-fill" style={{ width: isPlaying ? '35%' : '5%' }} />
+          </div>
+        </div>
       </div>
 
-      {/* Slot for the minimized video-chat pill — absolutely positioned so it doesn't push flex siblings */}
-      <div id="transport-chat-slot" style={{ position: 'absolute', right: 16 }} />
+      {/* Right group: video pill slot + stream indicator — pill is leftmost so it clips first */}
+      <div className="transport-right-group">
+        <div id="transport-chat-slot" />
+        <div className={`transport-section stream-section ${isStreaming ? 'streaming' : ''} ${isReceiving ? 'receiving' : ''}`}>
+          {userRole === 'artist' ? (
+            <button
+              className={`stream-btn ${isStreaming ? 'active' : ''}`}
+              onClick={onToggleStream}
+              title={isStreaming ? 'Stop streaming output' : 'Stream stereo output live'}
+            >
+              <Radio size={13} />
+              <span className="stream-label">{isStreaming ? 'LIVE' : 'STREAM'}</span>
+              {isStreaming && <span className="stream-live-dot" />}
+            </button>
+          ) : (
+            <div className={`stream-rx-indicator ${isReceiving ? 'active' : ''}`}>
+              <span className={`stream-live-dot ${isReceiving ? 'active' : ''}`} />
+              <span className="stream-label">{isReceiving ? 'ARTIST LIVE' : 'NO STREAM'}</span>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

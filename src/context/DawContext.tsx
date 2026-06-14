@@ -125,7 +125,8 @@ export type DawBaseAction =
   | { type: 'REMOVE_MARKER'; payload: string }
   | { type: 'RENAME_MARKER'; payload: { id: string; name: string } }
   | { type: 'MOVE_MARKER'; payload: { id: string; time: number } }
-  | { type: 'SET_STATE'; payload: Partial<DawState> };
+  | { type: 'SET_STATE'; payload: Partial<DawState> }
+  | { type: 'RENAME_PROJECT'; payload: string };
 
 export type DawAction = DawBaseAction & { fromSync?: boolean };
 
@@ -199,6 +200,7 @@ function dawReducer(state: DawState, action: DawAction): DawState {
     case 'UNDO':
     case 'REDO':
     case 'SET_STATE':
+    case 'RENAME_PROJECT':
     case 'SET_PLAYING':
     case 'SET_RECORDING':
     case 'SET_CURRENT_TIME':
@@ -260,6 +262,8 @@ function coreReducer(state: DawState, action: DawAction): DawState {
     }
     case 'SET_STATE':
       return { ...state, ...action.payload };
+    case 'RENAME_PROJECT':
+      return { ...state, projectName: action.payload };
     case 'SET_PLAYING':
       return { ...state, transport: { ...state.transport, isPlaying: action.payload } };
     case 'SET_RECORDING':

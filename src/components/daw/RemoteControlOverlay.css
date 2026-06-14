@@ -64,7 +64,59 @@
   width: 100%;
   display: block;
   object-fit: fill;
-  cursor: crosshair;
+  cursor: none; /* hide native cursor — we render our own dot */
+}
+
+/* Wrapper that positions the cursor dot over the video */
+.rc-video-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Animated cursor dot shown on engineer's screen-share view */
+.rc-cursor-dot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 77, 77, 0.9);
+  border: 2px solid #fff;
+  box-shadow: 0 0 8px rgba(255, 77, 77, 0.6);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  transition: left 0.03s linear, top 0.03s linear;
+}
+
+/* Loading overlay while screen-share stream connects */
+.rc-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  gap: 14px;
+  color: #999;
+  font-size: 13px;
+  z-index: 5;
+}
+
+.rc-loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #333;
+  border-top-color: #ff4d4d;
+  border-radius: 50%;
+  animation: rc-spin 0.8s linear infinite;
+}
+
+@keyframes rc-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Artist overlay — blocks local input, shows RC active banner ── */
@@ -111,4 +163,32 @@
 
 .rc-revoke-btn:hover {
   background: rgba(0, 0, 0, 0.45);
+}
+
+/* Remote cursor dot — engineer's position shown on artist's screen */
+.rc-remote-cursor {
+  position: fixed;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 77, 77, 0.85);
+  border: 2px solid #fff;
+  box-shadow: 0 0 10px rgba(255, 77, 77, 0.7), 0 0 20px rgba(255, 77, 77, 0.3);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  transition: left 0.05s linear, top 0.05s linear;
+}
+/* Pulse ring around the artist's remote cursor for extra visibility */
+.rc-remote-cursor::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 77, 77, 0.4);
+  animation: rc-cursor-pulse 1.5s ease-out infinite;
+}
+@keyframes rc-cursor-pulse {
+  0%   { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
 }

@@ -512,7 +512,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
         <div className="menu-modal-overlay" onClick={() => setShowAbout(false)}>
           <div className="menu-modal" onClick={e => e.stopPropagation()}>
             <h2 className="menu-modal-title">StudioDESK</h2>
-            <p className="menu-modal-version">Version 0.1.2</p>
+            <p className="menu-modal-version">Version {__APP_VERSION__}</p>
             <p style={{ color: '#aaa', marginTop: 8 }}>
               Professional audio collaboration for recording engineers and artists.<br />
               Built with React 19, Electron 42, and WebRTC.

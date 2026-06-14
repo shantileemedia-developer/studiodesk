@@ -34,6 +34,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
   const [toast, setToast] = useState<{ msg: string; id: number } | null>(null);
   const [rcActive, setRcActive] = useState(false);
   const [rcScreenStream, setRcScreenStream] = useState<MediaStream | null>(null);
+  const [remoteCursorPos, setRemoteCursorPos] = useState<{ nx: number; ny: number } | null>(null);
   const sendRcInputRef = useRef<((e: RemoteInputEvent) => void) | null>(null);
   // Persistent subscribed channel ref — avoids the silent-drop bug
   // where supabase.channel() called at send-time creates a fresh, unsubscribed handle
@@ -96,6 +97,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
     setRcActive(active);
     sendRcInputRef.current = sendFn;
     setRcScreenStream(active ? screenStream : null);
+    if (!active) setRemoteCursorPos(null);
   }, []);
 
   // Remembers where playback started so spacebar stop can return there (Cubase behaviour)
@@ -164,7 +166,10 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
   };
   const handleRecord = () => {
     actionsRef.current.record();
-    if (userRole === 'engineer') sendRemoteCmd('record');
+    if (userRole === 'engineer') {
+      sendRemoteCmd('record');
+      setToast({ msg: '● Record command sent — ensure Artist has a track armed.', id: Date.now() });
+    }
   };
 
   useEffect(() => {
@@ -340,7 +345,16 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
         userRole={userRole}
         userId={userId}
         roomCode={roomCode}
-        onInputEvent={userRole === 'artist' ? replayEvent : undefined}
+        onInputEvent={userRole === 'artist'
+          ? (event) => {
+              // Intercept pointermove to update the cursor position before replaying
+              if (event.type === 'pointermove') {
+                setRemoteCursorPos({ nx: (event as any).nx, ny: (event as any).ny });
+              }
+              replayEvent(event);
+            }
+          : undefined
+        }
         onRcStateChange={handleRcStateChange}
       />
 
@@ -356,6 +370,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
       {rcActive && userRole === 'artist' && (
         <RemoteControlOverlay
           userRole="artist"
+          remoteCursorPos={remoteCursorPos}
           onRevoke={() => setRcActive(false)}
         />
       )}

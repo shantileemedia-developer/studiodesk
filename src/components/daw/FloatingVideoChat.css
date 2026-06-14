@@ -345,53 +345,90 @@
   color: #fff;
 }
 
-/* ── Incoming Call Screen ────────────────────────────────────────── */
-.incoming-call-screen {
-  flex: 1;
+/* ── Incoming Call — Centred fullscreen modal (portalled to body) ─── */
+.incoming-call-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.incoming-call-modal-card {
+  background: linear-gradient(135deg, #1a1b1e 0%, #111318 100%);
+  border: 1px solid rgba(0, 255, 204, 0.2);
+  border-radius: 20px;
+  padding: 40px 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1a1b1e 0%, #111 100%);
-  padding: 24px;
+  gap: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(0,255,204,0.08);
+  animation: modal-appear 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes modal-appear {
+  from { opacity: 0; transform: scale(0.88); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 .incoming-call-avatar {
-  width: 64px;
-  height: 64px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
-  background-color: #00ffcc;
+  background: linear-gradient(135deg, #00ffcc, #00b4ff);
   color: #000;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: 30px;
   font-weight: bold;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
   animation: pulse-ring 2s infinite;
 }
 
 @keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.4); }
-  70% { box-shadow: 0 0 0 15px rgba(0, 255, 204, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.45); }
+  70%  { box-shadow: 0 0 0 20px rgba(0, 255, 204, 0); }
   100% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0); }
 }
 
 .incoming-call-text {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: #fff;
-  margin-bottom: 24px;
+}
+
+.incoming-call-from {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 12px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .incoming-call-actions {
   display: flex;
   gap: 20px;
+  margin-top: 8px;
+}
+.incoming-call-actions .control-btn {
+  width: auto;
+  padding: 0 24px;
+  height: 48px;
+  border-radius: 24px;
+  font-weight: 600;
 }
 .incoming-call-actions .control-btn.start-call {
-  padding: 0 24px;
-  height: 44px;
+  padding: 0 28px;
+  height: 48px;
 }
+
 
 /* ── Chat Pane ───────────────────────────────────────────────────── */
 .chat-pane {
@@ -545,47 +582,90 @@
   50%, 100% { opacity: 0.3; }
 }
 
-/* Artist RC consent banner */
-.rc-consent-banner {
-  background: rgba(255, 77, 77, 0.12);
-  border-bottom: 1px solid rgba(255, 77, 77, 0.3);
-  padding: 10px 14px;
+/* ── RC consent — fullscreen modal (mirrors incoming-call-modal style) ── */
+.rc-consent-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9100;
+  backdrop-filter: blur(4px);
+}
+
+.rc-consent-card {
+  background: #1e1f22;
+  border: 1px solid #3a3b3e;
+  border-radius: 16px;
+  padding: 32px 28px 28px;
+  min-width: 320px;
+  max-width: 400px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
 }
-.rc-consent-text {
-  font-size: 11px;
-  color: #d1d1d1;
-  line-height: 1.4;
+
+.rc-consent-monitor-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(0, 255, 204, 0.1);
+  border: 1px solid rgba(0, 255, 204, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
 }
+
+.rc-consent-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  text-align: center;
+}
+
+.rc-consent-body {
+  font-size: 13px;
+  color: #888;
+  text-align: center;
+  margin: 0;
+  line-height: 1.5;
+}
+
 .rc-consent-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 8px;
+  width: 100%;
 }
+
 .rc-consent-btn {
   flex: 1;
-  padding: 6px 0;
-  border-radius: 4px;
+  padding: 10px 0;
+  border-radius: 8px;
   border: none;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   letter-spacing: 0.3px;
+  transition: background 0.1s;
 }
+
 .rc-consent-btn.decline {
   background: #2a2b2e;
   color: #888;
 }
 .rc-consent-btn.decline:hover { background: #333; color: #ccc; }
+
 .rc-consent-btn.accept {
-  background: rgba(255, 77, 77, 0.25);
-  color: #ff4d4d;
-  border: 1px solid rgba(255, 77, 77, 0.4);
+  background: #00ffcc;
+  color: #000;
 }
-.rc-consent-btn.accept:hover {
-  background: rgba(255, 77, 77, 0.4);
-}
+.rc-consent-btn.accept:hover { background: #00e6b8; }
 
 /* ── Engineer Monitor Level knob ─────────────────────────────────── */
 .monitor-knob-row {

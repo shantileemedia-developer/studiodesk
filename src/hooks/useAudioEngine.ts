@@ -22,17 +22,21 @@ export const useAudioEngine = () => {
 
   const getAudioCtx = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-      const prefs = loadAudioPrefs();
-      const ctx = new AudioContext({ sampleRate: prefs.sampleRate });
-      audioCtxRef.current = ctx;
-      if (prefs.outputDeviceId !== 'default' && 'setSinkId' in ctx) {
-        (ctx as any).setSinkId(prefs.outputDeviceId).catch(() => {});
-      }
-      if (userRole === 'artist') {
-        masterStreamRef.current = ctx.createMediaStreamDestination();
+      try {
+        const prefs = loadAudioPrefs();
+        const ctx = new AudioContext({ sampleRate: prefs.sampleRate });
+        audioCtxRef.current = ctx;
+        if (prefs.outputDeviceId !== 'default' && 'setSinkId' in ctx) {
+          (ctx as any).setSinkId(prefs.outputDeviceId).catch(() => {});
+        }
+        if (userRole === 'artist') {
+          masterStreamRef.current = ctx.createMediaStreamDestination();
+        }
+      } catch (err) {
+        console.error('[AudioCtx] Failed to create AudioContext:', err);
       }
     }
-    return audioCtxRef.current;
+    return audioCtxRef.current!;
   }, [audioCtxRef, masterStreamRef, userRole]);
 
   const scheduleClick = useCallback((ctx: AudioContext, time: number, isAccent: boolean) => {
@@ -91,7 +95,9 @@ export const useAudioEngine = () => {
   }, [stopAnimLoop, currentTimeRef, dispatch]);
 
   const play = useCallback(async () => {
+    try {
     const ctx = getAudioCtx();
+    if (!ctx) return;
     if (ctx.state === 'suspended') await ctx.resume();
 
     const offset = currentTimeRef.current;
@@ -184,6 +190,9 @@ export const useAudioEngine = () => {
       }
     }
 
+  } catch (err) {
+    console.error('[AudioEngine] play() error:', err);
+  }
   }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, scheduleClick, userRole, masterStreamRef]);
 
   const stopSources = useCallback(() => {
@@ -264,8 +273,12 @@ export const useAudioEngine = () => {
           ? { deviceId: { exact: prefs.inputDeviceId } }
           : true;
       stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false });
-    } catch {
-      alert('Microphone access denied. Please allow microphone access in your browser or system settings.');
+    } catch (err: any) {
+      const msg = err?.name === 'NotAllowedError'
+        ? 'Microphone access denied. Allow microphone access and try again.'
+        : `Microphone error: ${err?.message ?? err}`;
+      alert(msg);
+      dispatch({ type: 'SET_RECORDING', payload: false });
       return;
     }
 

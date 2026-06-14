@@ -5,8 +5,8 @@
 .mixer-panel {
   display: flex;
   flex-direction: column;
-  height: 420px;
-  min-height: 0;
+  height: 320px;
+  min-height: 180px;
   flex-shrink: 0;
   background: #3A3A3A;
   border-top: 2px solid #222;
@@ -39,6 +39,16 @@
   gap: 6px;
 }
 
+.mixer-header-key {
+  background: #1a1b1e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 9px;
+  color: #888;
+  font-weight: 600;
+}
+
 .mixer-header-info {
   font-size: 10px;
   color: #888;
@@ -66,6 +76,12 @@
 .mixer-channels::-webkit-scrollbar-track  { background: #333; }
 .mixer-channels::-webkit-scrollbar-thumb  { background: #555; border-radius: 4px; }
 
+.mixer-master-divider {
+  width: 2px;
+  background: #222;
+  flex-shrink: 0;
+}
+
 /* ── Channel Strip ───────────────────────────────────────── */
 .mixer-ch {
   display: flex;
@@ -82,60 +98,7 @@
 
 .mixer-ch.sel { background: #787878; }
 
-.mixer-master {
-  background: #73685C;
-}
-
-/* ── Top Headers (Auto, Group) ───────────────────────────── */
-.pt-header-row {
-  background: #2A2A2A;
-  color: #fff;
-  font-size: 8.5px;
-  font-weight: bold;
-  text-align: center;
-  padding: 2px 0;
-  margin-top: 4px;
-  border-radius: 2px 2px 0 0;
-  letter-spacing: 0.5px;
-  border: 1px solid #222;
-  border-bottom: none;
-}
-
-.pt-auto-btn {
-  background: linear-gradient(180deg, #A89850, #8A783A);
-  color: #30FF30;
-  font-size: 8.5px;
-  font-weight: bold;
-  text-align: center;
-  padding: 3px 0;
-  border: 1px solid #222;
-  margin-bottom: 6px;
-  text-shadow: 1px 1px 1px rgba(0,0,0,0.6);
-  cursor: pointer;
-  border-radius: 0 0 2px 2px;
-}
-
-.pt-group-btn {
-  background: linear-gradient(180deg, #E8E8E8, #A8A8A8);
-  color: #111;
-  font-size: 8.5px;
-  text-align: center;
-  border: 1px solid #333;
-  border-radius: 2px;
-  margin-bottom: 8px;
-  box-shadow: inset 1px 1px 1px rgba(255,255,255,0.8), 0 1px 2px rgba(0,0,0,0.3);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 3px 5px;
-  cursor: pointer;
-  font-weight: 600;
-}
-.pt-group-btn::after {
-  content: "▼";
-  font-size: 6px;
-  color: #444;
-}
+.mixer-master { background: #73685C; }
 
 /* ── Pan Section ─────────────────────────────────────────── */
 .pt-pan-area {
@@ -218,9 +181,8 @@
 
 .pt-sq-btn.rec.on { background: linear-gradient(180deg, #5A2A2A, #8A3A3A); }
 .pt-sq-btn.rec.on .dot { background: #FF3030; box-shadow: 0 0 5px #FF3030; }
-
 .pt-sq-btn.solo.on { background: linear-gradient(180deg, #B8A850, #E8D880); color: #111; text-shadow: 0 0 4px #FFE060; }
-.pt-sq-btn.mute.on { background: linear-gradient(180deg, #A04000, #E06000); color: #FFF; text-shadow: 0 0 4px #FF8000;}
+.pt-sq-btn.mute.on { background: linear-gradient(180deg, #A04000, #E06000); color: #FFF; text-shadow: 0 0 4px #FF8000; }
 
 .pt-sq-btn .dot {
   width: 7px;
@@ -241,6 +203,7 @@
   position: relative;
   margin-bottom: 6px;
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+  min-height: 0;
 }
 
 .vfader-wrap {
@@ -249,29 +212,11 @@
   height: 100%;
 }
 
-.pt-scale {
-  width: 18px;
-  position: relative;
-  height: 100%;
-}
-.vfader-mark {
-  position: absolute;
-  right: 3px;
-  font-size: 8px;
-  color: #E8E8E8;
-  line-height: 1;
-  text-shadow: 1px 1px 1px rgba(0,0,0,0.8);
-  font-family: Arial, sans-serif;
-  transform: translateY(-50%);
-  font-weight: 500;
-}
-
 .pt-fader-track-wrap {
   flex: 1;
   position: relative;
   display: flex;
   justify-content: center;
-  height: 100%;
 }
 
 .pt-meter-wrap {
@@ -284,6 +229,7 @@
   justify-content: center;
   padding: 1px;
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.8);
+  flex-shrink: 0;
 }
 
 /* ── Fader Visuals ───────────────────────────────────────── */
@@ -315,7 +261,6 @@
   z-index: 4;
 }
 
-/* Horizontal groove cutout in center of fader (not full width) */
 .vfader-cap::after {
   content: "";
   position: absolute;
@@ -330,11 +275,12 @@
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.9);
 }
 
-.vfader-master-track .vfader-cap {
+/* Master fader cap — red tint */
+.vfader-master .vfader-cap {
   background: linear-gradient(90deg, #661010 0%, #D44040 15%, #E65050 25%, #C23030 60%, #E65050 85%, #661010 100%);
   border-color: #300505;
 }
-.vfader-master-track .vfader-cap::after {
+.vfader-master .vfader-cap::after {
   border-bottom-color: #8A3A3A;
 }
 
@@ -348,6 +294,7 @@
   justify-content: space-between;
   margin-bottom: 6px;
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.8);
+  flex-shrink: 0;
 }
 .pt-vol-readout span {
   font-family: "Courier New", monospace;
@@ -357,7 +304,7 @@
 .pt-vol-readout .vol-val { color: #30FF30; }
 .pt-vol-readout .vol-peak { color: #555; }
 
-/* ── Track Name Area ─────────────────────────────────────── */
+/* ── Track Name ──────────────────────────────────────────── */
 .pt-track-name {
   background: #C0C0C0;
   border: 1px solid #444;
@@ -367,6 +314,7 @@
   flex-direction: column;
   box-shadow: inset 0 1px 2px rgba(255,255,255,0.5), 0 1px 2px rgba(0,0,0,0.3);
   overflow: hidden;
+  flex-shrink: 0;
 }
 .pt-track-color {
   height: 4px;
@@ -389,14 +337,17 @@
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
 }
 
-/* Meters */
+/* ── VU Meter canvas ─────────────────────────────────────── */
 .mixer-vu-canvas {
   width: 100%;
   height: 100%;
   display: block;
 }
 
-/* Compact breakpoints */
-@media (max-height: 800px) {
-  .mixer-panel { height: 420px; }
+/* ── Laptop responsive — reduce height, not the fader layout ── */
+@media (max-height: 820px) {
+  .mixer-panel { height: 260px; min-height: 160px; }
+}
+@media (max-height: 680px) {
+  .mixer-panel { height: 200px; min-height: 140px; }
 }

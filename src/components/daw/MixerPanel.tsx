@@ -4,8 +4,6 @@ import type { Track } from '../../context/DawContext';
 import './MixerPanel.css';
 
 // ── dB / fader math ────────────────────────────────────────────────────────────
-const DB_MARKS = [12, 6, 0, -10, -20, -30, -40, -60];
-
 const dbToY = (db: number, h: number): number => {
   if (db >= 0)   return (0.50 - (db / 12) * 0.50) * h;
   if (db >= -60) return (0.50 + (db / -60) * 0.45) * h;
@@ -115,18 +113,16 @@ interface VerticalFaderProps {
   value: number;
   onChange: (v: number) => void;
   isMaster?: boolean;
-  trackH?: number;
 }
 
-const VerticalFader: React.FC<VerticalFaderProps> = ({
-  value, onChange, isMaster = false, trackH = 180,
-}) => {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [tH, setTH] = useState(trackH);
+const VerticalFader: React.FC<VerticalFaderProps> = ({ value, onChange, isMaster = false }) => {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [tH, setTH] = useState(180);
   const cbRef = useRef(onChange); cbRef.current = onChange;
 
+  // Measure the track wrap height and keep it updated on resize
   useLayoutEffect(() => {
-    const el = trackRef.current;
+    const el = wrapRef.current;
     if (!el) return;
     const measure = () => {
       const h = el.getBoundingClientRect().height;
@@ -139,7 +135,7 @@ const VerticalFader: React.FC<VerticalFaderProps> = ({
   }, []);
 
   const capH    = 28;
-  const travelH = tH - capH;
+  const travelH = Math.max(0, tH - capH);
   const capY    = Math.round(Math.max(0, Math.min(travelH, volToFaderY(value, travelH))));
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -163,31 +159,15 @@ const VerticalFader: React.FC<VerticalFaderProps> = ({
 
   return (
     <div className="vfader-wrap">
-      {/* dB scale */}
-      <div className="pt-scale" style={{ height: travelH }}>
-        {DB_MARKS.map(db => (
-          <div key={db} className={`vfader-mark${db === 0 ? ' zero' : ''}`}
-            style={{ top: dbToY(db, travelH) }}>
-            {db === 0 ? '0' : db > 0 ? `${db}` : Math.abs(db)}
-          </div>
-        ))}
-      </div>
-
-      {/* Track groove */}
-      <div className="pt-fader-track-wrap" style={{ height: trackH }}>
+      {/* Track groove — ref here so ResizeObserver sees the actual flexible height */}
+      <div className={`pt-fader-track-wrap${isMaster ? ' vfader-master' : ''}`} ref={wrapRef}>
         <div
-          ref={trackRef}
-          className={`vfader-track${isMaster ? ' vfader-master-track' : ''}`}
+          className="vfader-track"
           onDoubleClick={() => cbRef.current(0.8)}
           title="Double-click: unity (0 dB)"
-        >
-          {/* Unity hairline */}
-          <div className="vfader-unity" style={{ top: dbToY(0, travelH) }} />
-        </div>
-
-        {/* Cap */}
+        />
         <div
-          className={`vfader-cap${isMaster ? ' vfader-master-track' : ''}`}
+          className="vfader-cap"
           style={{ top: capY }}
           onPointerDown={onPointerDown}
         />
@@ -213,7 +193,10 @@ const PanKnob: React.FC<{ pan: number; onChange: (v: number) => void }> = ({ pan
     const mu = () => { drag.current = false; };
     document.addEventListener('mousemove', mm);
     document.addEventListener('mouseup',   mu);
-    return () => { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+    return () => {
+      document.removeEventListener('mousemove', mm);
+      document.removeEventListener('mouseup',   mu);
+    };
   }, []);
 
   const cx = size / 2, cy = size / 2, r = size / 2 - 2;
@@ -224,7 +207,9 @@ const PanKnob: React.FC<{ pan: number; onChange: (v: number) => void }> = ({ pan
 
   return (
     <div className="pan-wrap" title="Pan">
-      <svg width={size} height={size}
+      <svg
+        width={size}
+        height={size}
         onMouseDown={e => { e.preventDefault(); drag.current = true; sy.current = e.clientY; sv.current = pan; }}
         onDoubleClick={() => cbRef.current(0)}
         style={{ display: 'block' }}
@@ -237,7 +222,6 @@ const PanKnob: React.FC<{ pan: number; onChange: (v: number) => void }> = ({ pan
         </defs>
         <circle cx={cx} cy={cy} r={r + 1} fill="#111" />
         <circle cx={cx} cy={cy} r={r} fill={`url(#${gId})`} stroke="#222" strokeWidth={1} />
-        {/* Indicator Line */}
         <line x1={cx} y1={cy} x2={dx} y2={dy} stroke="#00FF00" strokeWidth={2.5} strokeLinecap="round" />
       </svg>
     </div>
@@ -245,8 +229,6 @@ const PanKnob: React.FC<{ pan: number; onChange: (v: number) => void }> = ({ pan
 };
 
 // ── Channel Strip ──────────────────────────────────────────────────────────────
-const METER_H = 180;
-
 interface ChannelStripProps {
   track: Track;
   trackAnalysersRef: React.MutableRefObject<Record<string, AnalyserNode>>;
@@ -254,9 +236,7 @@ interface ChannelStripProps {
   onClick: () => void;
 }
 
-const ChannelStrip: React.FC<ChannelStripProps> = ({
-  track, trackAnalysersRef, isSelected, onClick,
-}) => {
+const ChannelStrip: React.FC<ChannelStripProps> = ({ track, trackAnalysersRef, isSelected, onClick }) => {
   const { dispatch } = useDaw();
 
   const setVolume = (v: number) =>
@@ -267,7 +247,6 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({
     dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { name: n } } });
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
-
   const toggleMute = (e: React.MouseEvent) => {
     stop(e);
     dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { isMuted: !track.isMuted } } });
@@ -285,10 +264,7 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({
   const panStr = track.pan === 0 ? '  0  ' : track.pan < 0 ? `${panVal} ` : ` ${panVal}`;
 
   return (
-    <div
-      className={`mixer-ch${isSelected ? ' sel' : ''}`}
-      onClick={onClick}
-    >
+    <div className={`mixer-ch${isSelected ? ' sel' : ''}`} onClick={onClick}>
       {/* Pan */}
       <div className="pt-pan-area" style={{ marginTop: '4px' }}>
         <div className="pt-pan-knobs">
@@ -301,7 +277,7 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({
         </div>
       </div>
 
-      {/* Button Grid (I, R, S, M) */}
+      {/* Buttons: I R S M */}
       <div className="pt-btn-grid">
         <button className="pt-sq-btn">I</button>
         <button className={`pt-sq-btn rec${track.isArmed ? ' on' : ''}`} onClick={toggleArm}>
@@ -311,25 +287,24 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({
         <button className={`pt-sq-btn mute${track.isMuted ? ' on' : ''}`} onClick={toggleMute}>M</button>
       </div>
 
-      {/* Fader & Meter */}
+      {/* Fader + Meter */}
       <div className="pt-fader-area">
         <VerticalFader
           value={isFinite(track.volume) ? track.volume : 0.8}
           onChange={setVolume}
-          trackH={METER_H}
         />
         <div className="pt-meter-wrap">
-          <Meter analyserRef={trackAnalysersRef} trackId={track.id} height={METER_H} />
+          <Meter analyserRef={trackAnalysersRef} trackId={track.id} />
         </div>
       </div>
 
-      {/* Bottom Readout */}
+      {/* Volume readout */}
       <div className="pt-vol-readout">
         <span className="vol-val">∆ {volToDbStr(track.volume)}</span>
         <span className="vol-peak">-∞</span>
       </div>
 
-      {/* Track Name */}
+      {/* Track name */}
       <div className="pt-track-name">
         <div className="pt-track-color" style={{ background: track.color }} />
         <input
@@ -367,16 +342,16 @@ const MasterStrip: React.FC<{
       </div>
 
       <div className="pt-btn-grid">
-        <button className="pt-sq-btn" style={{ opacity: 0.5 }}>I</button>
-        <button className="pt-sq-btn" style={{ opacity: 0.5 }}><div className="dot" /></button>
-        <button className="pt-sq-btn" style={{ opacity: 0.5 }}>S</button>
-        <button className="pt-sq-btn" style={{ opacity: 0.5 }}>M</button>
+        <button className="pt-sq-btn" style={{ opacity: 0.4 }}>I</button>
+        <button className="pt-sq-btn" style={{ opacity: 0.4 }}><div className="dot" /></button>
+        <button className="pt-sq-btn" style={{ opacity: 0.4 }}>S</button>
+        <button className="pt-sq-btn" style={{ opacity: 0.4 }}>M</button>
       </div>
 
       <div className="pt-fader-area">
-        <VerticalFader value={isFinite(vol) ? vol : 0.8} onChange={onVol} isMaster trackH={METER_H} />
+        <VerticalFader value={isFinite(vol) ? vol : 0.8} onChange={onVol} isMaster />
         <div className="pt-meter-wrap">
-          <Meter analyserRef={analyserRef} trackId={firstKey} height={METER_H} />
+          <Meter analyserRef={analyserRef} trackId={firstKey} />
         </div>
       </div>
 
@@ -401,7 +376,6 @@ const MixerPanel: React.FC = () => {
 
   return (
     <div className="mixer-panel">
-      {/* Header */}
       <div className="mixer-header">
         <span className="mixer-header-label">
           <span className="mixer-header-key">F3</span> MIXER
@@ -409,7 +383,6 @@ const MixerPanel: React.FC = () => {
         <span className="mixer-header-info">{state.tracks.length} tracks · Stereo Out</span>
       </div>
 
-      {/* Channels */}
       <div className="mixer-body">
         <div className="mixer-channels">
           {state.tracks.map(track => (

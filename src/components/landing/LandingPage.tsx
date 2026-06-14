@@ -7,7 +7,7 @@ interface LandingPageProps {
   exeDownloadUrl?: string;
 }
 
-const APP_VERSION = '0.1.2';
+const APP_VERSION = __APP_VERSION__;
 
 const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }) => {
   const [screenshotError, setScreenshotError] = useState(false);

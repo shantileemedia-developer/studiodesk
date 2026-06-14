@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import type { RemoteInputEvent } from '../../types/remote';
 import './RemoteControlOverlay.css';
 
@@ -8,20 +8,58 @@ interface Props {
   onSendInput?: (event: RemoteInputEvent) => void;
   onRevoke?: () => void; // artist
   onExit?: () => void;   // engineer
+  /** normalized (0–1) cursor position broadcast by engineer — rendered for the artist */
+  remoteCursorPos?: { nx: number; ny: number } | null;
 }
 
 const RemoteControlOverlay: React.FC<Props> = ({
-  userRole, remoteScreenStream, onSendInput, onRevoke, onExit,
+  userRole, remoteScreenStream, onSendInput, onRevoke, onExit, remoteCursorPos,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoReady, setVideoReady] = useState(false);
+  // Engineer's local cursor position shown as a dot on top of the screen-share video
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
+  // ── Assign stream and handle blank-screen race condition ──────────────────
   useEffect(() => {
-    if (videoRef.current && remoteScreenStream) {
-      videoRef.current.srcObject = remoteScreenStream;
-    }
+    const el = videoRef.current;
+    if (!el || !remoteScreenStream) return;
+
+    setVideoReady(false);
+    el.srcObject = remoteScreenStream;
+
+    const tryPlay = () => {
+      el.play().catch(() => {
+        // Auto-play policy: retry after a short delay
+        setTimeout(() => el.play().catch(() => {}), 300);
+      });
+    };
+
+    const onLoadedMetadata = () => { tryPlay(); };
+    const onCanPlay = () => { setVideoReady(true); };
+
+    el.addEventListener('loadedmetadata', onLoadedMetadata);
+    el.addEventListener('canplay', onCanPlay);
+
+    // Fallback: if events never fire (already ready), start immediately
+    if (el.readyState >= 3) { tryPlay(); setVideoReady(true); }
+
+    // Retry stream assignment every 600ms in case the stream wasn't ready
+    let retryCount = 0;
+    const retry = setInterval(() => {
+      if (videoReady || retryCount++ > 8) { clearInterval(retry); return; }
+      if (el.readyState < 2) { el.srcObject = null; el.srcObject = remoteScreenStream; }
+    }, 600);
+
+    return () => {
+      el.removeEventListener('loadedmetadata', onLoadedMetadata);
+      el.removeEventListener('canplay', onCanPlay);
+      clearInterval(retry);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remoteScreenStream]);
 
-  // ── Engineer: capture all input from the video element ──
+  // ── Engineer: capture all pointer/keyboard input ──────────────────────────
   useEffect(() => {
     if (userRole !== 'engineer') return;
     const el = videoRef.current;
@@ -43,9 +81,14 @@ const RemoteControlOverlay: React.FC<Props> = ({
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      // Update local cursor dot position
+      setCursorPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
       const { nx, ny } = getNorm(e);
       onSendInput?.({ type: 'pointermove', nx, ny, button: e.button, buttons: e.buttons });
     };
+
+    const onPointerLeave = () => setCursorPos(null);
 
     const onPointerUp = (e: PointerEvent) => {
       e.preventDefault();
@@ -72,7 +115,6 @@ const RemoteControlOverlay: React.FC<Props> = ({
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      // Let Escape through so Engineer can exit RC
       if (e.key === 'Escape') { onExit?.(); return; }
       e.preventDefault();
       onSendInput?.({
@@ -93,6 +135,7 @@ const RemoteControlOverlay: React.FC<Props> = ({
 
     el.addEventListener('pointerdown', onPointerDown);
     el.addEventListener('pointermove', onPointerMove);
+    el.addEventListener('pointerleave', onPointerLeave);
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('dblclick', onDblClick);
     el.addEventListener('contextmenu', onContextMenu);
@@ -103,6 +146,7 @@ const RemoteControlOverlay: React.FC<Props> = ({
     return () => {
       el.removeEventListener('pointerdown', onPointerDown);
       el.removeEventListener('pointermove', onPointerMove);
+      el.removeEventListener('pointerleave', onPointerLeave);
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('dblclick', onDblClick);
       el.removeEventListener('contextmenu', onContextMenu);
@@ -122,18 +166,35 @@ const RemoteControlOverlay: React.FC<Props> = ({
           </div>
           <button className="rc-exit-btn" onClick={onExit}>Exit Remote Control (Esc)</button>
         </div>
-        <video
-          ref={videoRef}
-          className="rc-screen-video"
-          autoPlay
-          playsInline
-          muted
-        />
+        <div className="rc-video-wrap">
+          {/* Loading overlay while stream connects */}
+          {!videoReady && (
+            <div className="rc-loading-overlay">
+              <div className="rc-loading-spinner" />
+              <span>Connecting to Artist's screen…</span>
+            </div>
+          )}
+          <video
+            ref={videoRef}
+            className="rc-screen-video"
+            autoPlay
+            playsInline
+            muted
+            style={{ opacity: videoReady ? 1 : 0 }}
+          />
+          {/* Engineer's cursor dot */}
+          {cursorPos && (
+            <div
+              className="rc-cursor-dot"
+              style={{ left: cursorPos.x, top: cursorPos.y }}
+            />
+          )}
+        </div>
       </div>
     );
   }
 
-  // Artist view
+  // ── Artist view ───────────────────────────────────────────────────────────
   return (
     <div className="rc-artist-overlay">
       <div className="rc-artist-bar">
@@ -143,6 +204,16 @@ const RemoteControlOverlay: React.FC<Props> = ({
         </div>
         <button className="rc-revoke-btn" onClick={onRevoke}>Revoke Access</button>
       </div>
+      {/* Engineer's cursor shown on the artist's screen */}
+      {remoteCursorPos && (
+        <div
+          className="rc-remote-cursor"
+          style={{
+            left:  `${remoteCursorPos.nx * 100}%`,
+            top:   `${remoteCursorPos.ny * 100}%`,
+          }}
+        />
+      )}
     </div>
   );
 };

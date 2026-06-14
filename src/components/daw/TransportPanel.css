@@ -126,8 +126,10 @@
   border-right: none;
 }
 .tempo-box:hover {
-  background-color: rgba(255,255,255,0.04);
+  background-color: rgba(255,255,255,0.08);
 }
+.tempo-box:hover .label { color: #909090; }
+.tempo-box:hover .value { color: #ffffff; }
 
 .tempo-box .label {
   font-size: 10px;
@@ -144,6 +146,207 @@
   margin-top: 2px;
   font-family: 'Consolas', 'Courier New', monospace;
 }
+
+.tempo-box.active-pop {
+  background-color: rgba(0,255,204,0.08);
+  border-color: rgba(0,255,204,0.3);
+}
+.tempo-box.active-pop .value { color: #00ffcc; }
+
+/* ── Shared popover shell ──────────────────────────── */
+.tp-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  background: #1e2024;
+  border: 1px solid #3a3c44;
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
+  z-index: 2000;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: pop-in 0.12s ease;
+}
+@keyframes pop-in {
+  from { opacity:0; transform: translateY(6px) scale(0.97); }
+  to   { opacity:1; transform: translateY(0) scale(1); }
+}
+.tpp-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: #606060;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+/* ── Tempo popover ─────────────────────────────────── */
+.tempo-popover {
+  left: 0;
+  min-width: 190px;
+}
+.tpp-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tpp-nudge {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #2a2c32;
+  border: 1px solid #3a3c44;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tpp-nudge:hover { background: #33363e; color: #fff; }
+.tpp-input {
+  flex: 1;
+  background: #111316;
+  border: 1px solid #3a3c44;
+  border-radius: 6px;
+  color: #00ffcc;
+  font-size: 22px;
+  font-weight: 700;
+  font-family: 'Consolas', 'Courier New', monospace;
+  text-align: center;
+  padding: 4px 6px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.tpp-input:focus { border-color: #00ffcc; }
+.tpp-fine-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tpp-fine-btn {
+  flex: 1;
+  background: #2a2c32;
+  border: 1px solid #3a3c44;
+  border-radius: 5px;
+  color: #888;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.tpp-fine-btn:hover { background: #33363e; color: #ccc; }
+.tpp-tap-btn {
+  flex: 1.4;
+  background: #00ffcc18;
+  border: 1px solid rgba(0,255,204,0.3);
+  border-radius: 5px;
+  color: #00ffcc;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.tpp-tap-btn:hover { background: #00ffcc28; }
+.tpp-tap-btn:active { background: #00ffcc40; }
+.tpp-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tpp-preset {
+  background: #252830;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #888;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  cursor: pointer;
+  font-family: 'Consolas', monospace;
+}
+.tpp-preset:hover { background: #2e3038; color: #ccc; }
+.tpp-preset.active {
+  background: rgba(0,255,204,0.15);
+  border-color: rgba(0,255,204,0.4);
+  color: #00ffcc;
+}
+
+/* ── Time Signature popover ────────────────────────── */
+.sig-popover {
+  left: 60px;
+  min-width: 160px;
+}
+.sig-lists {
+  display: flex;
+  gap: 0;
+  height: 160px;
+}
+.sig-list-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sig-list-header {
+  font-size: 9px;
+  font-weight: 700;
+  color: #555;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  text-align: center;
+  padding-bottom: 6px;
+}
+.sig-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+.sig-list-divider {
+  width: 1px;
+  background: #2e3038;
+  margin: 0 8px;
+  align-self: stretch;
+}
+.sig-list-item {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #888;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Consolas', monospace;
+  text-align: center;
+  padding: 4px 0;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.sig-list-item:hover { background: #2a2c32; color: #ccc; }
+.sig-list-item.active {
+  background: rgba(0,255,204,0.15);
+  border-color: rgba(0,255,204,0.35);
+  color: #00ffcc;
+}
+.sig-ok-btn {
+  background: #00ffcc;
+  border: none;
+  border-radius: 6px;
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 7px 0;
+  cursor: pointer;
+  width: 100%;
+}
+.sig-ok-btn:hover { background: #00e6b8; }
 
 .click-box.active .value {
   color: #00ffcc;

@@ -6,6 +6,7 @@ interface WaveformDisplayProps {
   color: string;
   height?: number;
   isPlaying?: boolean;
+  isSelected?: boolean;
 }
 
 const hexToRgb = (hex: string): [number, number, number] => {
@@ -51,56 +52,22 @@ function drawChannel(
     mid + Math.max(0, p) * (height / 2 - 1) * (flip ? -0.92 : 0.92),
   ]);
 
-  // Fill top half
-  const gradTop = ctx.createLinearGradient(0, yTop, 0, mid);
-  gradTop.addColorStop(0,   c(0.55));
-  gradTop.addColorStop(0.6, c(0.22));
-  gradTop.addColorStop(1,   c(0.06));
   ctx.beginPath();
-  ctx.moveTo(0, mid);
+  ctx.moveTo(topPts[0][0], topPts[0][1]);
   for (const [x, y] of topPts) ctx.lineTo(x, y);
-  ctx.lineTo(W, mid);
+  for (let i = botPts.length - 1; i >= 0; i--) ctx.lineTo(botPts[i][0], botPts[i][1]);
   ctx.closePath();
-  ctx.fillStyle = gradTop;
+
+  // Glassmorphism: subtle color tint, glowing stroke, no solid fill
+  ctx.fillStyle = c(0.07);
   ctx.fill();
-
-  // Fill bottom half
-  const gradBot = ctx.createLinearGradient(0, mid, 0, yBottom);
-  gradBot.addColorStop(0,   c(0.06));
-  gradBot.addColorStop(0.4, c(0.22));
-  gradBot.addColorStop(1,   c(0.55));
-  ctx.beginPath();
-  ctx.moveTo(0, mid);
-  for (const [x, y] of botPts) ctx.lineTo(x, y);
-  ctx.lineTo(W, mid);
-  ctx.closePath();
-  ctx.fillStyle = gradBot;
-  ctx.fill();
-
-  // Top outline
-  ctx.beginPath();
-  topPts.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
-  ctx.strokeStyle = c(0.9);
-  ctx.lineWidth   = 1;
-  ctx.lineJoin    = 'round';
+  ctx.shadowColor = c(0.7);
+  ctx.shadowBlur = 5;
+  ctx.strokeStyle = c(0.92);
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
   ctx.stroke();
-
-  // Bottom outline
-  ctx.beginPath();
-  botPts.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
-  ctx.strokeStyle = c(0.9);
-  ctx.lineWidth   = 1;
-  ctx.stroke();
-
-  // Zero-line (centre hairline) — visible reference mark
-  ctx.beginPath();
-  ctx.moveTo(0, mid);
-  ctx.lineTo(W, mid);
-  ctx.strokeStyle = c(0.35);
-  ctx.lineWidth   = 0.75;
-  ctx.setLineDash([2, 3]);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
 }
 
 function drawWaveform(
@@ -108,6 +75,7 @@ function drawWaveform(
   peaks: number[],
   peaksR: number[] | null | undefined,
   color: string,
+  isSelected: boolean,
 ) {
   const dpr  = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth;
@@ -156,6 +124,7 @@ const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
   color,
   height,
   isPlaying = false,
+  isSelected = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -163,7 +132,7 @@ const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
     const canvas = canvasRef.current;
     if (!canvas || peaks.length === 0) return;
 
-    const render = () => drawWaveform(canvas, peaks, peaksR, color);
+    const render = () => drawWaveform(canvas, peaks, peaksR, color, isSelected);
 
     const ro = new ResizeObserver(render);
     ro.observe(canvas);

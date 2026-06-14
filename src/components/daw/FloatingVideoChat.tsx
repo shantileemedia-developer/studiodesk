@@ -17,13 +17,13 @@ interface FloatingVideoChatProps {
 }
 
 // ── Ringtone synthesized via Web Audio ───────────────────────────────────────
-function useRingtone(isRinging: boolean) {
-  const ctxRef = useRef<AudioContext | null>(null);
+function useRingtone(isIncoming: boolean, isOutgoing: boolean) {
+  const ctxRef      = useRef<AudioContext | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isRinging   = isIncoming || isOutgoing;
 
   useEffect(() => {
     if (!isRinging) {
-      // Stop ringing
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
       ctxRef.current?.close().catch(() => {});
       ctxRef.current = null;
@@ -33,33 +33,49 @@ function useRingtone(isRinging: boolean) {
     const ctx = new AudioContext();
     ctxRef.current = ctx;
 
-    const playChirp = () => {
-      if (!ctxRef.current || ctxRef.current.state === 'closed') return;
-      const now = ctx.currentTime;
-      [0, 0.18].forEach((offset, i) => {
+    // Classic PSTN dual-tone (440 Hz + 480 Hz)
+    const playDualTone = (startTime: number, duration: number, amp: number) => {
+      [440, 480].forEach(freq => {
         const osc  = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(i === 0 ? 880 : 1100, now + offset);
-        osc.frequency.exponentialRampToValueAtTime(i === 0 ? 660 : 880, now + offset + 0.15);
-        gain.gain.setValueAtTime(0, now + offset);
-        gain.gain.linearRampToValueAtTime(0.35, now + offset + 0.02);
-        gain.gain.linearRampToValueAtTime(0, now + offset + 0.15);
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(amp, startTime + 0.02);
+        gain.gain.setValueAtTime(amp, startTime + duration - 0.04);
+        gain.gain.linearRampToValueAtTime(0, startTime + duration);
         osc.connect(gain);
         gain.connect(ctx.destination);
-        osc.start(now + offset);
-        osc.stop(now + offset + 0.16);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
       });
     };
 
-    playChirp();
-    intervalRef.current = setInterval(playChirp, 2000);
+    if (isIncoming) {
+      // "Ring ring" — two 400 ms bursts with 150 ms gap, then 2.5 s silence (~3 s total)
+      const playPattern = () => {
+        if (!ctxRef.current || ctxRef.current.state === 'closed') return;
+        const now = ctx.currentTime;
+        playDualTone(now, 0.4, 0.32);
+        playDualTone(now + 0.55, 0.4, 0.32);
+      };
+      playPattern();
+      intervalRef.current = setInterval(playPattern, 3000);
+    } else {
+      // Outgoing ringback: softer, single 1.8 s tone every ~5.8 s
+      const playRingback = () => {
+        if (!ctxRef.current || ctxRef.current.state === 'closed') return;
+        playDualTone(ctx.currentTime, 1.8, 0.15);
+      };
+      playRingback();
+      intervalRef.current = setInterval(playRingback, 5800);
+    }
 
     return () => {
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
       ctx.close().catch(() => {});
     };
-  }, [isRinging]);
+  }, [isRinging, isIncoming]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,9 +86,15 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   const [isMinimized, setIsMinimized] = useState(true);
   const [showChat, setShowChat] = useState(false);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [size, setSize] = useState<{ width: number; height: number }>({ width: 320, height: 0 });
   const [monitorVolume, setMonitorVolume] = useState(0.7);
   const [rcDenied, setRcDenied] = useState(false);
+  const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  const [showLocalCam, setShowLocalCam] = useState(true);
+  const previewStreamRef = useRef<MediaStream | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; initW: number; initH: number; el: HTMLElement } | null>(null);
+  const widgetRef = useRef<HTMLDivElement>(null);
 
   const { masterStreamRef, audioCtxRef } = useDaw();
   const { initAudioCtx } = useAudioEngine();
@@ -159,8 +181,32 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     onRcStateChange?.(rcActive, rcActive ? sendInputEvent : null, rcActive ? remoteScreenStream : null);
   }, [rcActive, sendInputEvent, onRcStateChange, remoteScreenStream]);
 
-  // ── Ringtone — plays for both the caller (isCalling) and callee (incomingCall) ──
-  useRingtone(incomingCall || isCalling);
+  // ── Camera preview — starts when widget opens, releases when call goes active ──
+  useEffect(() => {
+    if (isMinimized || callActive) {
+      previewStreamRef.current?.getTracks().forEach(t => t.stop());
+      previewStreamRef.current = null;
+      setPreviewStream(null);
+      return;
+    }
+    let cancelled = false;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+      .then(stream => {
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        previewStreamRef.current = stream;
+        setPreviewStream(stream);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      previewStreamRef.current?.getTracks().forEach(t => t.stop());
+      previewStreamRef.current = null;
+      setPreviewStream(null);
+    };
+  }, [isMinimized, callActive]);
+
+  // ── Ringtone — different sound for incoming vs outgoing ──────────────────
+  useRingtone(incomingCall, isCalling);
 
   // ── Drag Handlers ────────────────────────────────────────────────────────
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -184,6 +230,33 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     dragRef.current = null;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  const handleResizeDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = widgetRef.current;
+    if (!el) return;
+    resizeRef.current = {
+      startX: e.clientX, startY: e.clientY,
+      initW: el.offsetWidth, initH: el.offsetHeight,
+      el,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeRef.current) return;
+    const { startX, startY, initW, initH } = resizeRef.current;
+    setSize({
+      width: Math.max(240, initW + (e.clientX - startX)),
+      height: Math.max(180, initH + (e.clientY - startY)),
+    });
+  };
+
+  const handleResizeUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    resizeRef.current = null;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   };
 
@@ -267,9 +340,15 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
       {rcConsentModal}
 
       <div
+        ref={widgetRef}
         className="floating-video-widget"
-        style={position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', margin: 0 } : undefined}
+        style={{
+          ...(position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', margin: 0 } : undefined),
+          width: size.width,
+          ...(size.height > 0 ? { height: size.height } : undefined),
+        }}
       >
+        <div className="widget-inner-clip">
         <div
           className="widget-header"
           style={{ cursor: 'move', userSelect: 'none' }}
@@ -290,34 +369,54 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
           </div>
         </div>
 
-        {/* Video grid — shows live <video> elements instead of the always-hidden refs */}
+        {/* Video grid — main feed + PiP local cam */}
         <div className="video-grid">
+          {/* Main: remote during call, self-preview before */}
           <div className="video-feed remote">
-            {remoteStream ? (
-              <video
-                autoPlay playsInline className="video-el"
-                ref={el => { if (el && remoteStream) el.srcObject = remoteStream; }}
-              />
+            {callActive ? (
+              remoteStream ? (
+                <video autoPlay playsInline className="video-el"
+                  ref={el => { if (el && remoteStream) el.srcObject = remoteStream; }}
+                />
+              ) : (
+                <div className="video-placeholder">{isCalling ? 'Ringing…' : 'Connecting…'}</div>
+              )
             ) : (
-              <div className="video-placeholder">
-                {isCalling ? 'Ringing...' : callActive ? 'Connecting...' : userRole === 'artist' ? 'Engineer Cam' : 'Artist Cam'}
-              </div>
+              previewStream ? (
+                <video autoPlay playsInline muted className="video-el"
+                  ref={el => { if (el && previewStream) el.srcObject = previewStream; }}
+                />
+              ) : (
+                <div className="video-placeholder">{isCalling ? 'Calling…' : 'Camera Preview'}</div>
+              )
             )}
-            <div className="feed-name">{userRole === 'engineer' ? 'Artist' : 'Engineer'}</div>
+            <div className="feed-name">
+              {callActive ? (userRole === 'engineer' ? 'Artist' : 'Engineer') : 'You'}
+            </div>
           </div>
 
-          {callActive && (
+          {/* PiP: your cam during active call */}
+          {callActive && showLocalCam && (
             <div className="video-feed local">
               {localStream ? (
-                <video
-                  autoPlay playsInline muted className="video-el"
+                <video autoPlay playsInline muted className="video-el"
                   ref={el => { if (el && localStream) el.srcObject = localStream; }}
                 />
               ) : (
-                <div className="video-placeholder">Your Cam</div>
+                <div className="video-placeholder" style={{ fontSize: 10 }}>Your Cam</div>
               )}
               <div className="feed-name">You</div>
+              <button className="pip-hide-btn" onClick={() => setShowLocalCam(false)} title="Hide your camera">
+                <VideoOff size={9} />
+              </button>
             </div>
+          )}
+
+          {/* Restore PiP when hidden */}
+          {callActive && !showLocalCam && (
+            <button className="pip-show-btn" onClick={() => setShowLocalCam(true)} title="Show your camera">
+              <Video size={11} />
+            </button>
           )}
         </div>
 
@@ -402,6 +501,15 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
             </button>
           </div>
         </div>
+
+        </div>
+
+        <div
+          className="widget-resize-handle"
+          onPointerDown={handleResizeDown}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeUp}
+        />
       </div>
     </>
   );

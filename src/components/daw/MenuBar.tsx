@@ -3,7 +3,8 @@ import { useDaw } from '../../context/DawContext';
 import { initialState } from '../../context/DawContext';
 import type { Region, PoolItem } from '../../context/DawContext';
 import { supabase } from '../../lib/supabaseClient';
-import { saveToAudioFolder } from '../../utils/audioUtils';
+import { saveToAudioFolder, generatePeaksStereo } from '../../utils/audioUtils';
+import { exportToWav, exportStems, consolidateTrack } from '../../utils/exportUtils';
 import './MenuBar.css';
 
 interface MenuItem {
@@ -48,8 +49,13 @@ const SHORTCUT_LIST = [
   { key: 'G / H',           action: 'Zoom In / Out (Arrange)' },
   { key: 'Shift+G / H',     action: 'Track Height Increase / Decrease' },
   { key: 'Ctrl+Scroll',     action: 'Horizontal Zoom' },
-  { key: 'B',               action: 'Bounce Selected Region' },
+  { key: 'B',               action: 'Bounce Selected Clip' },
+  { key: 'Shift+B',        action: 'Bounce Track (loop range or full track)' },
   { key: 'A / B',           action: 'Switch Stereo Track Version' },
+  { key: 'Ctrl+D',          action: 'Duplicate Selected Clip' },
+  { key: 'X',               action: 'Split Clip at Cursor' },
+  { key: 'Double-click clip', action: 'Rename Clip (Select tool)' },
+  { key: 'Drag fade knob',  action: 'Set Fade In / Fade Out' },
 ];
 
 const MenuBar: React.FC<MenuBarProps> = ({
@@ -72,6 +78,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
   });
   const [notepadText, setNotepadText] = useState(() => localStorage.getItem('sd_notepad') || '');
   const [projectTempo, setProjectTempo] = useState(0);
+  const [exportProgress, setExportProgress] = useState<string | null>(null);
 
   const barRef = useRef<HTMLDivElement>(null);
   const clipboardRef = useRef<Region | null>(null);
@@ -191,33 +198,29 @@ const MenuBar: React.FC<MenuBarProps> = ({
         const actx = new AudioContext();
         const buf = await actx.decodeAudioData(await file.arrayBuffer());
         const duration = buf.duration;
-        const ch = buf.getChannelData(0);
-        const buckets = 200;
-        const step = Math.max(1, Math.floor(ch.length / buckets));
-        const peaks: number[] = [];
-        for (let i = 0; i < buckets; i++) {
-          let max = 0;
-          for (let j = 0; j < step; j++) max = Math.max(max, Math.abs(ch[i * step + j] || 0));
-          peaks.push(max);
-        }
+        const { left: peaks, right: rawPeaksR } = await generatePeaksStereo(buf);
         await actx.close();
+        const poolItemId = `pool_${Date.now()}`;
         const poolItem: PoolItem = {
-          id: `pool_${Date.now()}`,
+          id: poolItemId,
           name: file.name.replace(/\.[^.]+$/, ''),
           audioUrl: url,
           localFileName: file.name,
           duration,
           createdAt: new Date(),
           waveformPeaks: peaks,
+          waveformPeaksR: rawPeaksR,
         };
         dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
         if (state.selectedTrackId) {
           const track = state.tracks.find(t => t.id === state.selectedTrackId);
           if (track) {
+            const peaksR = track.type === 'stereo' ? rawPeaksR : null;
             dispatch({
               type: 'ADD_REGION',
               payload: {
                 id: `r_${Date.now()}`,
+                poolItemId,
                 trackId: track.id,
                 versionId: track.activeVersionId,
                 startTime: currentTimeRef.current,
@@ -225,6 +228,10 @@ const MenuBar: React.FC<MenuBarProps> = ({
                 name: poolItem.name,
                 audioUrl: url,
                 waveformPeaks: peaks,
+                waveformPeaksR: peaksR,
+                sourceDuration: duration,
+                sourcePeaks: peaks,
+                sourcePeaksR: rawPeaksR,
               },
             });
           }
@@ -285,6 +292,53 @@ const MenuBar: React.FC<MenuBarProps> = ({
     else toast('No regions on selected track.');
   }, [state.regions, state.selectedTrackId, dispatch, toast]);
 
+  // ── Export ───────────────────────────────────────────────────────────
+
+  const handleExportMixdown = useCallback(async () => {
+    try {
+      setExportProgress('Rendering mixdown…');
+      await exportToWav(state, projectName, pct => {
+        setExportProgress(`Rendering… ${Math.round(pct * 100)}%`);
+      });
+      toast('Mixdown exported.');
+    } catch (err: any) {
+      toast(`Export failed: ${err?.message ?? err}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }, [state, projectName, toast]);
+
+  const handleExportStems = useCallback(async () => {
+    try {
+      setExportProgress('Preparing stems…');
+      await exportStems(state, projectName, msg => setExportProgress(msg));
+      toast('Stems exported as ZIP.');
+    } catch (err: any) {
+      toast(`Export failed: ${err?.message ?? err}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }, [state, projectName, toast]);
+
+  const handleConsolidateTrack = useCallback(async () => {
+    const trackId = state.selectedTrackId;
+    if (!trackId) { toast('Select a track first.'); return; }
+    try {
+      setExportProgress('Consolidating track…');
+      const result = await consolidateTrack(state, trackId, msg => setExportProgress(msg));
+      if (!result) { toast('No clips on selected track.'); return; }
+      const url = URL.createObjectURL(result.blob);
+      const a   = document.createElement('a');
+      a.href = url; a.download = `${result.name}.wav`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast(`Consolidated: ${result.name}`);
+    } catch (err: any) {
+      toast(`Consolidate failed: ${err?.message ?? err}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }, [state, toast]);
+
   // ── Seek ─────────────────────────────────────────────────────────────
 
   const handleRewind = useCallback(() => {
@@ -315,6 +369,10 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { label: 'Save As…',              shortcut: 'Ctrl+Shift+S', onClick: handleSaveAs },
         { separator: true, label: '' },
         { label: 'Import Audio File…',                              onClick: handleImportAudio },
+        { separator: true, label: '' },
+        { label: 'Export Mixdown…',    onClick: handleExportMixdown },
+        { label: 'Export Stems…',      onClick: handleExportStems },
+        { label: 'Consolidate Track…', onClick: handleConsolidateTrack },
         { separator: true, label: '' },
         { label: 'Sign Out', onClick: async () => { await supabase.auth.signOut(); window.location.reload(); } },
         { label: 'Quit', shortcut: 'Ctrl+Q', onClick: () => { if (confirm('Quit StudioDESK?')) window.close(); } },
@@ -505,6 +563,16 @@ const MenuBar: React.FC<MenuBarProps> = ({
       {/* ── Local toast ── */}
       {localToast && (
         <div className="menu-local-toast">{localToast}</div>
+      )}
+
+      {/* ── Export progress overlay ── */}
+      {exportProgress && (
+        <div className="export-progress-overlay">
+          <div className="export-progress-box">
+            <div className="export-spinner" />
+            <span>{exportProgress}</span>
+          </div>
+        </div>
       )}
 
       {/* ── About modal ── */}

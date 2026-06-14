@@ -28,6 +28,7 @@ interface DawWorkspaceProps {
 
 const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode }) => {
   const [showInspector, setShowInspector] = useState(true);
+  const [showMixer, setShowMixer] = useState(true);
   const [showPreferences, setShowPreferences] = useState(false);
   const [showAudioPrefs, setShowAudioPrefs] = useState(false);
   const [onlineCount, setOnlineCount] = useState(1);
@@ -323,7 +324,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
             <TrackList />
             <ArrangeWindow />
           </div>
-          <MixerPanel />
+          {showMixer && <MixerPanel />}
         </div>
 
         <MediaPoolPanel />
@@ -331,6 +332,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
 
       <TransportPanel
         toggleInspector={() => setShowInspector(v => !v)}
+        toggleMixer={() => setShowMixer(v => !v)}
         onPlay={handlePlay}
         onStop={handleStop}
         onReturnToZero={handleReturnToZero}

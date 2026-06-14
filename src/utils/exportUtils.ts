@@ -161,6 +161,136 @@ export async function renderMixdown({
   return ctx.startRendering();
 }
 
+// ── Stems exporter ────────────────────────────────────────────────────────────
+
+/**
+ * Render each track to its own WAV file starting at time 0, then bundle
+ * everything into a ZIP and trigger a browser download.
+ * Muted tracks and tracks excluded by solo are skipped.
+ */
+export async function exportStems(
+  state: DawState,
+  projectName: string,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const { tracks, regions } = state;
+
+  if (regions.length === 0) throw new Error('No regions to export.');
+
+  const totalDuration = Math.max(...regions.map(r => r.startTime + r.duration), 1);
+  const sampleRate    = 48000;
+  const hasSolo       = tracks.some(t => t.isSolo);
+  const playable      = tracks.filter(t => !t.isMuted && (!hasSolo || t.isSolo));
+
+  const JSZip = (await import('jszip')).default;
+  const zip   = new JSZip();
+
+  for (const track of playable) {
+    const trackRegions = regions.filter(
+      r => r.trackId === track.id && r.versionId === track.activeVersionId && !r.isMuted && r.audioUrl
+    );
+    if (trackRegions.length === 0) continue;
+
+    onProgress?.(`Rendering ${track.name}…`);
+
+    try {
+      const offCtx = new OfflineAudioContext(2, Math.ceil(totalDuration * sampleRate), sampleRate);
+      const gain   = offCtx.createGain();
+      const panner = offCtx.createStereoPanner();
+      gain.gain.value  = isFinite(track.volume) ? track.volume : 0.8;
+      panner.pan.value = isFinite(track.pan)    ? Math.max(-1, Math.min(1, track.pan)) : 0;
+      gain.connect(panner);
+      panner.connect(offCtx.destination);
+
+      await Promise.all(trackRegions.map(async (region) => {
+        try {
+          const resp = await fetch(region.audioUrl);
+          const ab   = await resp.arrayBuffer();
+          const buf  = await offCtx.decodeAudioData(ab);
+          const src  = offCtx.createBufferSource();
+          src.buffer = buf;
+
+          // Apply fade-in / fade-out via automation
+          if (region.fadeIn || region.fadeOut) {
+            const fg = offCtx.createGain();
+            fg.gain.setValueAtTime(region.fadeIn ? 0 : 1, region.startTime);
+            if (region.fadeIn) {
+              fg.gain.linearRampToValueAtTime(1, region.startTime + region.fadeIn);
+            }
+            if (region.fadeOut) {
+              const foStart = region.startTime + region.duration - region.fadeOut;
+              fg.gain.setValueAtTime(1, foStart);
+              fg.gain.linearRampToValueAtTime(0, region.startTime + region.duration);
+            }
+            src.connect(fg);
+            fg.connect(gain);
+          } else {
+            src.connect(gain);
+          }
+
+          src.start(region.startTime, region.audioOffset ?? 0, region.duration);
+        } catch { /* skip undecodable */ }
+      }));
+
+      const rendered = await offCtx.startRendering();
+      const wavBlob  = encodeWav(rendered);
+      zip.file(`${track.name}.wav`, await wavBlob.arrayBuffer());
+    } catch (err) {
+      console.error(`Stem render failed for "${track.name}":`, err);
+    }
+  }
+
+  onProgress?.('Compressing…');
+  const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  triggerDownload(zipBlob, `${projectName}_Stems.zip`);
+}
+
+// ── Consolidate track ─────────────────────────────────────────────────────────
+
+/**
+ * Render all clips on a single track into one continuous WAV starting at t=0.
+ * Returns the WAV blob — caller decides what to do with it.
+ */
+export async function consolidateTrack(
+  state: DawState,
+  trackId: string,
+  onProgress?: (message: string) => void
+): Promise<{ blob: Blob; name: string } | null> {
+  const track   = state.tracks.find(t => t.id === trackId);
+  if (!track) return null;
+
+  const trackRegions = state.regions.filter(
+    r => r.trackId === trackId && r.versionId === track.activeVersionId && !r.isMuted && r.audioUrl
+  );
+  if (trackRegions.length === 0) return null;
+
+  const totalDuration = Math.max(...trackRegions.map(r => r.startTime + r.duration));
+  const sampleRate    = 48000;
+
+  onProgress?.(`Consolidating ${track.name}…`);
+
+  const offCtx = new OfflineAudioContext(2, Math.ceil(totalDuration * sampleRate), sampleRate);
+  const gain   = offCtx.createGain();
+  gain.gain.value = 1; // full gain — preserve original levels
+  gain.connect(offCtx.destination);
+
+  await Promise.all(trackRegions.map(async (region) => {
+    try {
+      const resp = await fetch(region.audioUrl);
+      const ab   = await resp.arrayBuffer();
+      const buf  = await offCtx.decodeAudioData(ab);
+      const src  = offCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(gain);
+      src.start(region.startTime, region.audioOffset ?? 0, region.duration);
+    } catch { /* skip */ }
+  }));
+
+  const rendered = await offCtx.startRendering();
+  const blob     = encodeWav(rendered);
+  return { blob, name: `${track.name}_consolidated` };
+}
+
 // ── Public export function ────────────────────────────────────────────────────
 
 /**

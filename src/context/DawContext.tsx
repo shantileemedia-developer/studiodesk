@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useReducer, useRef, useCallback } from 'react';
 
+const TRACK_DEFAULT_COLORS = ['#808080'];
+
 export interface TrackVersion {
   id: string;
   name: string;
@@ -23,17 +25,23 @@ export interface Track {
 
 export interface Region {
   id: string;
+  poolItemId?: string;      // stable reference to the source PoolItem (used by UPDATE_AUDIO_URLS)
   trackId: string;
   versionId: string;
-  startTime: number;
-  duration: number;
+  startTime: number;        // timelineStart
+  duration: number;         // timelineLength (visible clip length in timeline)
   name: string;
-  audioUrl: string;
+  audioUrl: string;         // URL to the source audio file
   waveformPeaks: number[];
   waveformPeaksR?: number[] | null;
-  audioOffset?: number;     // seconds into the source file (for split regions)
-  sourceDuration?: number;  // total duration of the source audio file (caps right-trim)
+  audioOffset?: number;     // sourceOffset: seconds into the source file where the clip window starts
+  sourceDuration?: number;  // sourceLength: total duration of the source audio file (caps edge extension)
   isMuted?: boolean;
+  fadeIn?: number;          // fade-in duration in seconds
+  fadeOut?: number;         // fade-out duration in seconds
+  color?: string;           // per-clip color override (falls back to track color)
+  sourcePeaks?: number[];   // full-source waveform peaks — enables correct display after trim/slip
+  sourcePeaksR?: number[] | null;
 }
 
 export interface PoolItem {
@@ -102,6 +110,8 @@ export type DawBaseAction =
   | { type: 'ADD_REGION'; payload: Region }
   | { type: 'REMOVE_REGION'; payload: string }
   | { type: 'MOVE_REGION'; payload: { regionId: string; startTime?: number; trackId?: string } }
+  | { type: 'UPDATE_REGION'; payload: { id: string; updates: Partial<Region> } }
+  | { type: 'RENAME_REGION'; payload: { id: string; name: string } }
   | { type: 'ADD_TRACK_AND_MOVE_REGION'; payload: { regionId: string; trackType?: 'mono' | 'stereo' } }
   | { type: 'BOUNCE_REGIONS'; payload: { regionIds: string[]; newRegion: Region; newPoolItem: PoolItem } }
   | { type: 'SPLIT_REGION'; payload: { regionId: string; splitTime: number } }
@@ -160,10 +170,10 @@ const makeTrack = (
 };
 
 const initialTracks: Track[] = [
-  makeTrack('Playback Track', '#00ffcc', 'stereo', '0'),
-  makeTrack('Audio Track',  '#ffd700', 'mono',   '1'),
-  makeTrack('Audio Track',  '#ff4d4d', 'mono',   '2'),
-  makeTrack('Audio Track',  '#4d9fff', 'mono',   '3'),
+  makeTrack('Playback Track', '#4db8ff', 'stereo', '0'),
+  makeTrack('Audio Track',   '#808080', 'mono',   '1'),
+  makeTrack('Audio Track',   '#808080', 'mono',   '2'),
+  makeTrack('Audio Track',   '#808080', 'mono',   '3'),
 ];
 
 export const initialState: DawState = {
@@ -294,7 +304,10 @@ function coreReducer(state: DawState, action: DawAction): DawState {
 
     case 'ADD_TRACK': {
       const trackType = action.payload?.trackType ?? 'mono';
-      const color = trackType === 'stereo' ? '#00ffcc' : '#555555';
+      const monoCount = state.tracks.filter(t => t.type === 'mono').length;
+      const color = trackType === 'stereo'
+        ? '#4db8ff'
+        : TRACK_DEFAULT_COLORS[monoCount % TRACK_DEFAULT_COLORS.length];
       const name = trackType === 'stereo' ? 'Playback Track' : 'Audio Track';
       const newTrack = makeTrack(name, color, trackType);
       // Stereo tracks always inserted at the top
@@ -395,6 +408,9 @@ function coreReducer(state: DawState, action: DawAction): DawState {
         waveformPeaksR: orig.waveformPeaksR ? orig.waveformPeaksR.slice(0, peakMidR) : orig.waveformPeaksR,
         audioOffset: orig.audioOffset ?? 0,
         sourceDuration: orig.sourceDuration,
+        // Source peaks propagate unsliced — both halves window the same source file
+        sourcePeaks:  orig.sourcePeaks,
+        sourcePeaksR: orig.sourcePeaksR,
       };
       const right: Region = {
         ...orig, id: `${regionId}_r${stamp}`,
@@ -404,6 +420,8 @@ function coreReducer(state: DawState, action: DawAction): DawState {
         waveformPeaksR: orig.waveformPeaksR ? orig.waveformPeaksR.slice(peakMidR) : orig.waveformPeaksR,
         audioOffset: (orig.audioOffset ?? 0) + leftDur,
         sourceDuration: orig.sourceDuration,
+        sourcePeaks:  orig.sourcePeaks,
+        sourcePeaksR: orig.sourcePeaksR,
       };
 
       const idx = state.regions.findIndex(r => r.id === regionId);
@@ -416,6 +434,22 @@ function coreReducer(state: DawState, action: DawAction): DawState {
         ],
       };
     }
+
+    case 'UPDATE_REGION':
+      return {
+        ...state,
+        regions: state.regions.map(r =>
+          r.id === action.payload.id ? { ...r, ...action.payload.updates } : r
+        ),
+      };
+
+    case 'RENAME_REGION':
+      return {
+        ...state,
+        regions: state.regions.map(r =>
+          r.id === action.payload.id ? { ...r, name: action.payload.name } : r
+        ),
+      };
 
     case 'TOGGLE_REGION_MUTE':
       return {
@@ -478,12 +512,11 @@ function coreReducer(state: DawState, action: DawAction): DawState {
 
     case 'UPDATE_AUDIO_URLS': {
       const { poolItemId, audioUrl } = action.payload;
-      const poolItem = state.poolItems.find(p => p.id === poolItemId);
-      if (!poolItem) return state;
       return {
         ...state,
         poolItems: state.poolItems.map(p => p.id === poolItemId ? { ...p, audioUrl } : p),
-        regions: state.regions.map(r => r.name === poolItem.name ? { ...r, audioUrl } : r),
+        // Match by poolItemId (stable) — name matching was fragile and could affect wrong regions
+        regions: state.regions.map(r => r.poolItemId === poolItemId ? { ...r, audioUrl } : r),
       };
     }
 
@@ -500,7 +533,9 @@ function coreReducer(state: DawState, action: DawAction): DawState {
       };
 
     case 'ADD_TRACK_AND_MOVE_REGION': {
-      const newTrack = makeTrack('Audio Track', '#555555', action.payload.trackType ?? 'mono');
+      const monoCount2 = state.tracks.filter(t => t.type === 'mono').length;
+      const newColor = TRACK_DEFAULT_COLORS[monoCount2 % TRACK_DEFAULT_COLORS.length];
+      const newTrack = makeTrack('Audio Track', newColor, action.payload.trackType ?? 'mono');
       return {
         ...state,
         tracks: [...state.tracks, newTrack],

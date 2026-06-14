@@ -69,8 +69,9 @@ const TrackList = () => {
         const peaksR = track.type === 'stereo' ? rawPeaksR : null;
         const duration = buf.duration;
         await actx.close();
+        const poolItemId = `pool_${Date.now()}`;
         const poolItem: PoolItem = {
-          id: `pool_${Date.now()}`,
+          id: poolItemId,
           name: file.name.replace(/\.[^.]+$/, ''),
           audioUrl: url,
           localFileName: file.name,
@@ -84,6 +85,7 @@ const TrackList = () => {
           type: 'ADD_REGION',
           payload: {
             id: `r_${Date.now()}`,
+            poolItemId,
             trackId: track.id,
             versionId: track.activeVersionId,
             startTime: currentTimeRef.current,
@@ -93,6 +95,8 @@ const TrackList = () => {
             waveformPeaks: peaks,
             waveformPeaksR: peaksR ?? undefined,
             sourceDuration: duration,
+            sourcePeaks:  peaks,
+            sourcePeaksR: rawPeaksR ?? undefined,
           },
         });
         if (audioDirHandle) {
@@ -127,6 +131,13 @@ const TrackList = () => {
     ] : [];
     return [
       { label: '✏  Rename Track',        onClick: () => startEdit(track.id, track.name) },
+      { label: '🎨  Change Color…',       onClick: () => {
+        const inp = document.createElement('input');
+        inp.type  = 'color';
+        inp.value = track.color;
+        inp.onchange = () => dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { color: inp.value } } });
+        inp.click();
+      }},
       { label: '⬇  Import Audio File…',  onClick: () => handleImportToTrack(track.id) },
       ...versionItems,
       ...addItems,

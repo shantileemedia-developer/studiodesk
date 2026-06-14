@@ -4,6 +4,9 @@ import type { Region, PoolItem } from '../context/DawContext';
 import { generatePeaksStereo, uploadAudioToSupabase, saveToAudioFolder } from '../utils/audioUtils';
 import { loadAudioPrefs } from '../components/daw/AudioMIDIPreferencesDialog';
 
+const CLICK_LOOKAHEAD_S = 0.15;  // schedule this many seconds ahead
+const CLICK_INTERVAL_MS = 25;    // scheduler polling interval (ms)
+
 export const useAudioEngine = () => {
   const { state, dispatch, currentTimeRef, audioCtxRef, recordingStartTimeRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, userRole, masterStreamRef, audioDirHandle } = useDaw();
 
@@ -19,6 +22,16 @@ export const useAudioEngine = () => {
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   // Track last dispatch time to avoid 60fps React state updates
   const lastDispatchTimeRef = useRef<number>(0);
+  // Incremented by stop/pause to cancel any in-progress play() after its decode phase
+  const playIdRef = useRef(0);
+  // Cache decoded AudioBuffers so 2nd+ plays are instant
+  const bufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const clickSourcesRef  = useRef<any[]>([]);
+  const nextClickTimeRef = useRef(0);
+  const clickBeatRef     = useRef(0);
+  const clickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tempoRef         = useRef(state.transport.tempo);
+  const timeSigRef       = useRef<[number, number]>(state.transport.timeSignature as [number, number]);
 
   const getAudioCtx = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
@@ -39,21 +52,70 @@ export const useAudioEngine = () => {
     return audioCtxRef.current!;
   }, [audioCtxRef, masterStreamRef, userRole]);
 
+  // Keep refs current so the live metronome scheduler reads the latest values
+  useEffect(() => { tempoRef.current = state.transport.tempo; }, [state.transport.tempo]);
+  useEffect(() => { timeSigRef.current = state.transport.timeSignature as [number, number]; }, [state.transport.timeSignature]);
+
   const scheduleClick = useCallback((ctx: AudioContext, time: number, isAccent: boolean) => {
+    const DUR = 0.022;
+    // Noise burst — sharp transient attack of a wood block
+    const smpCt = Math.floor(ctx.sampleRate * DUR);
+    const nBuf  = ctx.createBuffer(1, smpCt, ctx.sampleRate);
+    const nData = nBuf.getChannelData(0);
+    for (let i = 0; i < smpCt; i++) nData[i] = Math.random() * 2 - 1;
+    const nSrc = ctx.createBufferSource();
+    nSrc.buffer = nBuf;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = isAccent ? 2000 : 1100;
+    hp.Q.value = 1;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0, time);
+    nGain.gain.linearRampToValueAtTime(isAccent ? 1.1 : 0.65, time + 0.001);
+    nGain.gain.exponentialRampToValueAtTime(0.001, time + DUR);
+    nSrc.connect(hp); hp.connect(nGain);
+    nGain.connect(ctx.destination);
+    if (masterStreamRef.current) nGain.connect(masterStreamRef.current);
+    nSrc.start(time); nSrc.stop(time + DUR + 0.002);
+    clickSourcesRef.current.push(nSrc);
+    // Pitched tone — resonant body of the wood block
     const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(isAccent ? 1200 : 800, time);
-    osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.1);
-    gain.gain.setValueAtTime(0.5, time);
-    gain.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    if (masterStreamRef.current) gain.connect(masterStreamRef.current);
-    osc.start(time);
-    osc.stop(time + 0.1);
-    activeSourcesRef.current.push(osc as any);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(isAccent ? 1800 : 900, time);
+    osc.frequency.exponentialRampToValueAtTime(isAccent ? 700 : 380, time + DUR);
+    const oGain = ctx.createGain();
+    oGain.gain.setValueAtTime(isAccent ? 0.45 : 0.28, time);
+    oGain.gain.exponentialRampToValueAtTime(0.001, time + DUR);
+    osc.connect(oGain);
+    oGain.connect(ctx.destination);
+    if (masterStreamRef.current) oGain.connect(masterStreamRef.current);
+    osc.start(time); osc.stop(time + DUR + 0.002);
+    clickSourcesRef.current.push(osc);
   }, [masterStreamRef]);
+
+  const stopMetronome = useCallback(() => {
+    if (clickIntervalRef.current !== null) {
+      clearInterval(clickIntervalRef.current);
+      clickIntervalRef.current = null;
+    }
+    const now = audioCtxRef.current?.currentTime ?? 0;
+    clickSourcesRef.current.forEach(n => { try { n.stop(now); } catch {} });
+    clickSourcesRef.current = [];
+  }, [audioCtxRef]);
+
+  const startMetronome = useCallback((ctx: AudioContext) => {
+    const schedule = () => {
+      const now = ctx.currentTime;
+      while (nextClickTimeRef.current < now + CLICK_LOOKAHEAD_S) {
+        const beatInBar = clickBeatRef.current % timeSigRef.current[0];
+        scheduleClick(ctx, nextClickTimeRef.current, beatInBar === 0);
+        nextClickTimeRef.current += 60 / tempoRef.current;
+        clickBeatRef.current++;
+      }
+    };
+    schedule();
+    clickIntervalRef.current = setInterval(schedule, CLICK_INTERVAL_MS);
+  }, [scheduleClick]);
 
 
   const stopAnimLoop = useCallback(() => {
@@ -100,17 +162,13 @@ export const useAudioEngine = () => {
     if (!ctx) return;
     if (ctx.state === 'suspended') await ctx.resume();
 
+    // Capture a generation ID so stop()/pause() can abort an in-progress decode
+    const playId = ++playIdRef.current;
     const offset = currentTimeRef.current;
-    // Schedule 120 ms ahead so all parallel decodes finish before audio starts
-    const LOOKAHEAD = 0.12;
-    const scheduleStart = ctx.currentTime + LOOKAHEAD;
-    playStartAudioTimeRef.current = scheduleStart;
-    playStartDawTimeRef.current = offset;
 
     dispatch({ type: 'SET_PLAYING', payload: true });
-    startAnimLoop(ctx);
 
-    // Load and schedule all non-muted regions that overlap current time
+    // Build per-track mix buses synchronously before any awaits
     const hasSolo = state.tracks.some(t => t.isSolo);
     const playableTracks = new Set(
       state.tracks
@@ -132,7 +190,6 @@ export const useAudioEngine = () => {
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.75;
 
-      // chain: source → gain → panner → analyser → destination
       gain.connect(panner);
       panner.connect(analyser);
       analyser.connect(ctx.destination);
@@ -151,49 +208,120 @@ export const useAudioEngine = () => {
       region.startTime + region.duration > offset
     );
 
-    // Decode all regions in parallel — much faster than serial awaits
-    await Promise.all(playableRegions.map(async (region) => {
+    // Decode ALL audio first — before locking in the schedule time.
+    // This ensures the playhead and audio always start in sync, even for large files.
+    // Decoded buffers are cached by URL so 2nd+ plays are instant.
+    const decoded = await Promise.all(playableRegions.map(async (region) => {
       try {
-        const response = await fetch(region.audioUrl);
-        const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-
-        const bus = trackBusses[region.trackId];
-        if (bus) source.connect(bus.gain);
-
-        const whenInAudio  = scheduleStart + Math.max(0, region.startTime - offset);
-        // audioOffset shifts into the source file for split regions
-        const fileOffset   = (region.audioOffset ?? 0) + Math.max(0, offset - region.startTime);
-        // limit playback to the region duration so split regions don't bleed
-        const playDuration = region.duration - Math.max(0, offset - region.startTime);
-
-        source.start(whenInAudio, fileOffset, playDuration);
-        activeSourcesRef.current.push(source);
+        let audioBuffer = bufferCacheRef.current.get(region.audioUrl);
+        if (!audioBuffer) {
+          const response = await fetch(region.audioUrl);
+          const arrayBuffer = await response.arrayBuffer();
+          audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+          bufferCacheRef.current.set(region.audioUrl, audioBuffer);
+        }
+        return { region, audioBuffer };
       } catch {
-        // Skip regions with undecodable audio
+        return null;
       }
     }));
 
-    if (state.transport.metronomeOn) {
-      const bps = state.transport.tempo / 60;
-      const beatDuration = 1 / bps;
-      let currentBeat = Math.ceil(playStartDawTimeRef.current * bps);
-      for (let i = 0; i < 500; i++) {
-        const beatTime = (currentBeat + i) * beatDuration;
-        const when = playStartAudioTimeRef.current + (beatTime - playStartDawTimeRef.current);
-        if (when >= ctx.currentTime) {
-          scheduleClick(ctx, when, (currentBeat + i) % 4 === 0);
+    // If stop() or pause() was called during decode, bail out — don't start audio
+    if (playId !== playIdRef.current) return;
+
+    // Detect crossfades: when two clips on the same track overlap, the overlapping
+    // portion fades out clip A and fades in clip B automatically.
+    const effectiveFades = new Map<string, { fadeIn: number; fadeOut: number }>();
+    const byTrack = new Map<string, typeof decoded>();
+    for (const item of decoded) {
+      if (!item) continue;
+      const arr = byTrack.get(item.region.trackId) ?? [];
+      arr.push(item);
+      byTrack.set(item.region.trackId, arr);
+    }
+    for (const clips of byTrack.values()) {
+      clips.sort((a, b) => a!.region.startTime - b!.region.startTime);
+      for (let i = 0; i + 1 < clips.length; i++) {
+        const a = clips[i]!;
+        const b = clips[i + 1]!;
+        const overlap = (a.region.startTime + a.region.duration) - b.region.startTime;
+        if (overlap > 0.01) {
+          const af = effectiveFades.get(a.region.id) ?? { fadeIn: a.region.fadeIn ?? 0, fadeOut: a.region.fadeOut ?? 0 };
+          af.fadeOut = Math.max(af.fadeOut, overlap);
+          effectiveFades.set(a.region.id, af);
+          const bf = effectiveFades.get(b.region.id) ?? { fadeIn: b.region.fadeIn ?? 0, fadeOut: b.region.fadeOut ?? 0 };
+          bf.fadeIn = Math.max(bf.fadeIn, overlap);
+          effectiveFades.set(b.region.id, bf);
         }
       }
+    }
+
+    // Lock in the schedule time NOW — everything below is synchronous,
+    // so the gap between scheduleStart and source.start() is negligible
+    const LOOKAHEAD = 0.05;
+    const scheduleStart = ctx.currentTime + LOOKAHEAD;
+    playStartAudioTimeRef.current = scheduleStart;
+    playStartDawTimeRef.current = offset;
+    startAnimLoop(ctx);
+
+    for (const item of decoded) {
+      if (!item) continue;
+      const { region, audioBuffer } = item;
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+
+      const whenInAudio    = scheduleStart + Math.max(0, region.startTime - offset);
+      const timeIntoRegion = Math.max(0, offset - region.startTime);
+      const fileOffset     = (region.audioOffset ?? 0) + timeIntoRegion;
+      const playDuration   = region.duration - timeIntoRegion;
+
+      const bus = trackBusses[region.trackId];
+      if (bus) {
+        const ef = effectiveFades.get(region.id);
+        const fi = ef ? ef.fadeIn  : (region.fadeIn  ?? 0);
+        const fo = ef ? ef.fadeOut : (region.fadeOut ?? 0);
+        if (fi > 0 || fo > 0) {
+          const fg = ctx.createGain();
+          if (fi > 0) {
+            if (timeIntoRegion >= fi) {
+              fg.gain.setValueAtTime(1, whenInAudio);
+            } else {
+              const startGain = timeIntoRegion / fi;
+              fg.gain.setValueAtTime(startGain, whenInAudio);
+              fg.gain.linearRampToValueAtTime(1, whenInAudio + (fi - timeIntoRegion));
+            }
+          } else {
+            fg.gain.setValueAtTime(1, whenInAudio);
+          }
+          if (fo > 0) {
+            const foStart = whenInAudio + Math.max(0, region.duration - fo - timeIntoRegion);
+            fg.gain.setValueAtTime(1, foStart);
+            fg.gain.linearRampToValueAtTime(0, whenInAudio + playDuration);
+          }
+          source.connect(fg);
+          fg.connect(bus.gain);
+        } else {
+          source.connect(bus.gain);
+        }
+      }
+
+      source.start(whenInAudio, fileOffset, playDuration);
+      activeSourcesRef.current.push(source);
+    }
+
+    if (state.transport.metronomeOn) {
+      const bps = state.transport.tempo / 60;
+      clickBeatRef.current = Math.ceil(playStartDawTimeRef.current * bps);
+      nextClickTimeRef.current = playStartAudioTimeRef.current +
+        (clickBeatRef.current / bps - playStartDawTimeRef.current);
+      startMetronome(ctx);
     }
 
   } catch (err) {
     console.error('[AudioEngine] play() error:', err);
   }
-  }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, scheduleClick, userRole, masterStreamRef]);
+  }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, startMetronome, masterStreamRef]);
 
   const stopSources = useCallback(() => {
     activeSourcesRef.current.forEach(s => { try { s.stop(); } catch { /* already stopped */ } });
@@ -230,22 +358,26 @@ export const useAudioEngine = () => {
 
   // Pause: halt playback but keep the playhead position
   const pause = useCallback(() => {
+    ++playIdRef.current;
     stopAnimLoop();
     stopSources();
+    stopMetronome();
     stopRecordingSession();
     dispatch({ type: 'SET_PLAYING', payload: false });
-  }, [stopAnimLoop, stopSources, stopRecordingSession, dispatch]);
+  }, [stopAnimLoop, stopSources, stopMetronome, stopRecordingSession, dispatch]);
 
   // Stop: halt playback AND return to zero
   const stop = useCallback(() => {
+    ++playIdRef.current;
     stopAnimLoop();
     stopSources();
+    stopMetronome();
     stopRecordingSession();
     currentTimeRef.current = 0;
     lastDispatchTimeRef.current = 0;
     dispatch({ type: 'SET_PLAYING', payload: false });
     dispatch({ type: 'SET_CURRENT_TIME', payload: 0 });
-  }, [stopAnimLoop, stopSources, stopRecordingSession, dispatch, currentTimeRef]);
+  }, [stopAnimLoop, stopSources, stopMetronome, stopRecordingSession, dispatch, currentTimeRef]);
 
   const record = useCallback(async () => {
     if (userRole === 'engineer') {
@@ -396,6 +528,7 @@ export const useAudioEngine = () => {
       const armedTrackObj = state.tracks.find(t => t.id === currentTrackId);
       const region: Region = {
         id: `region_${Date.now()}`,
+        poolItemId,
         trackId: currentTrackId,
         versionId: armedTrackObj?.activeVersionId ?? 'default',
         startTime: recordingStartDawTimeRef.current,
@@ -405,6 +538,8 @@ export const useAudioEngine = () => {
         waveformPeaks: peaks,
         waveformPeaksR: peaksR,
         sourceDuration: duration,
+        sourcePeaks:  peaks,
+        sourcePeaksR: peaksR,
       };
 
       dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
@@ -412,6 +547,8 @@ export const useAudioEngine = () => {
     };
 
     const startRecordingSession = () => {
+      // Capture a generation ID so stop() can abort in-flight overdub decodes
+      const recId = ++playIdRef.current;
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(100);
 
@@ -456,10 +593,15 @@ export const useAudioEngine = () => {
         if (region.startTime + region.duration <= offset) continue;
 
         // Fetch + schedule asynchronously — OK since these are pre-recorded clips
-        fetch(region.audioUrl)
-          .then(r => r.arrayBuffer())
-          .then(ab => ctx.decodeAudioData(ab))
-          .then(audioBuffer => {
+        const cachedBuf = bufferCacheRef.current.get(region.audioUrl);
+        (cachedBuf
+          ? Promise.resolve(cachedBuf)
+          : fetch(region.audioUrl)
+              .then(r => r.arrayBuffer())
+              .then(ab => ctx.decodeAudioData(ab))
+              .then(buf => { bufferCacheRef.current.set(region.audioUrl, buf); return buf; })
+        ).then(audioBuffer => {
+            if (recId !== playIdRef.current) return; // stop was pressed
             const source = ctx.createBufferSource();
             source.buffer = audioBuffer;
             const bus = trackBusses[region.trackId];
@@ -475,15 +617,10 @@ export const useAudioEngine = () => {
 
       if (state.transport.metronomeOn) {
         const bps = state.transport.tempo / 60;
-        const beatDuration = 1 / bps;
-        let currentBeat = Math.ceil(playStartDawTimeRef.current * bps);
-        for (let i = 0; i < 500; i++) {
-          const beatTime = (currentBeat + i) * beatDuration;
-          const when = playStartAudioTimeRef.current + (beatTime - playStartDawTimeRef.current);
-          if (when >= ctx.currentTime) {
-            scheduleClick(ctx, when, (currentBeat + i) % 4 === 0);
-          }
-        }
+        clickBeatRef.current = Math.ceil(playStartDawTimeRef.current * bps);
+        nextClickTimeRef.current = playStartAudioTimeRef.current +
+          (clickBeatRef.current / bps - playStartDawTimeRef.current);
+        startMetronome(ctx);
       }
     };
 
@@ -498,7 +635,21 @@ export const useAudioEngine = () => {
     } else {
       startRecordingSession();
     }
-  }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, scheduleClick, userRole, masterStreamRef]);
+  }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, scheduleClick, startMetronome, userRole, masterStreamRef]);
+
+  // Restart click scheduler immediately when tempo or time signature changes during playback
+  useEffect(() => {
+    if (!state.transport.isPlaying || !state.transport.metronomeOn) return;
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state !== 'running') return;
+    stopMetronome();
+    const bps = state.transport.tempo / 60;
+    clickBeatRef.current = Math.round(currentTimeRef.current * bps);
+    nextClickTimeRef.current = ctx.currentTime + 0.02;
+    startMetronome(ctx);
+  // Only react to tempo/sig changes; isPlaying/metronomeOn are guards checked inside
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.transport.tempo, state.transport.timeSignature]);
 
   return { play, pause, stop, record, stopRecordingSession, initAudioCtx: getAudioCtx };
 };

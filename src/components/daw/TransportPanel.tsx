@@ -1,13 +1,160 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Play, Square, Circle, SkipBack, SkipForward, Repeat,
-  Activity, LayoutPanelLeft, Radio,
+  Activity, LayoutPanelLeft, LayoutPanelTop, Radio, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
 import './TransportPanel.css';
 
+const SIG_NUMERATORS   = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
+const SIG_DENOMINATORS = [1,2,4,8,16,32];
+const TEMPO_PRESETS    = [60,70,80,90,100,110,120,128,140,150,160,170,180];
+
+// ── Tempo Popover ────────────────────────────────────────────────────────────
+const TempoPopover: React.FC<{ tempo: number; onClose: () => void; onCommit: (v: number) => void; onMouseEnter: () => void; onMouseLeave: () => void }> = ({ tempo, onClose, onCommit, onMouseEnter, onMouseLeave }) => {
+  const [raw, setRaw] = useState(tempo.toFixed(1));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const popRef   = useRef<HTMLDivElement>(null);
+  const tapTimesRef = useRef<number[]>([]);
+
+  useEffect(() => { inputRef.current?.select(); }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const commit = (val: string) => {
+    const n = parseFloat(val);
+    if (!isNaN(n) && n >= 20 && n <= 400) { onCommit(Math.round(n * 10) / 10); onClose(); }
+  };
+
+  const nudge = (delta: number) => {
+    const n = parseFloat(raw);
+    const next = Math.min(400, Math.max(20, (isNaN(n) ? tempo : n) + delta));
+    const s = (Math.round(next * 10) / 10).toFixed(1);
+    setRaw(s);
+    onCommit(parseFloat(s));
+  };
+
+  const tap = () => {
+    const now = performance.now();
+    const times = tapTimesRef.current;
+    if (times.length && now - times[times.length - 1] > 2500) times.length = 0;
+    times.push(now);
+    if (times.length >= 2) {
+      const avg = (times[times.length - 1] - times[0]) / (times.length - 1);
+      const bpm = Math.round((60000 / avg) * 10) / 10;
+      const clamped = Math.min(400, Math.max(20, bpm));
+      setRaw(clamped.toFixed(1));
+      onCommit(clamped);
+    }
+  };
+
+  return (
+    <div ref={popRef} className="tp-popover tempo-popover" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <div className="tpp-label">TEMPO</div>
+      <div className="tpp-input-row">
+        <button className="tpp-nudge" onClick={() => nudge(-1)} title="-1 BPM"><ChevronDown size={14}/></button>
+        <input
+          ref={inputRef}
+          className="tpp-input"
+          value={raw}
+          onChange={e => setRaw(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commit(raw);
+            if (e.key === 'Escape') onClose();
+            if (e.key === 'ArrowUp')   { e.preventDefault(); nudge(e.shiftKey ? 0.1 : 1); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); nudge(e.shiftKey ? -0.1 : -1); }
+            e.stopPropagation();
+          }}
+          onWheel={e => { e.preventDefault(); nudge(e.deltaY < 0 ? 1 : -1); }}
+        />
+        <button className="tpp-nudge" onClick={() => nudge(1)} title="+1 BPM"><ChevronUp size={14}/></button>
+      </div>
+      <div className="tpp-fine-row">
+        <button className="tpp-fine-btn" onClick={() => nudge(-0.1)}>−0.1</button>
+        <button className="tpp-tap-btn" onClick={tap}>TAP</button>
+        <button className="tpp-fine-btn" onClick={() => nudge(0.1)}>+0.1</button>
+      </div>
+      <div className="tpp-presets">
+        {TEMPO_PRESETS.map(p => (
+          <button key={p} className={`tpp-preset ${Math.round(tempo) === p ? 'active' : ''}`}
+            onClick={() => { onCommit(p); setRaw(p.toFixed(1)); onClose(); }}>
+            {p}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ── Time Signature Popover ────────────────────────────────────────────────────
+const SigPopover: React.FC<{ sig: [number,number]; onClose: () => void; onCommit: (s: [number,number]) => void; onMouseEnter: () => void; onMouseLeave: () => void }> = ({ sig, onClose, onCommit, onMouseEnter, onMouseLeave }) => {
+  const [num, setNum] = useState(sig[0]);
+  const [den, setDen] = useState(sig[1]);
+  const popRef = useRef<HTMLDivElement>(null);
+  const numRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const denRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) {
+        onCommit([num, den]); onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose, onCommit, num, den]);
+
+  useEffect(() => { numRefs.current[num]?.scrollIntoView({ block: 'center' }); }, []);
+  useEffect(() => { denRefs.current[den]?.scrollIntoView({ block: 'center' }); }, []);
+
+  const apply = (n: number, d: number) => { setNum(n); setDen(d); onCommit([n, d]); };
+
+  return (
+    <div ref={popRef} className="tp-popover sig-popover" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <div className="tpp-label">TIME SIGNATURE</div>
+      <div className="sig-lists">
+        <div className="sig-list-col">
+          <div className="sig-list-header">Beats</div>
+          <div className="sig-list-scroll">
+            {SIG_NUMERATORS.map(n => (
+              <button key={n}
+                ref={el => { numRefs.current[n] = el; }}
+                className={`sig-list-item ${num === n ? 'active' : ''}`}
+                onClick={() => apply(n, den)}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="sig-list-divider" />
+        <div className="sig-list-col">
+          <div className="sig-list-header">Division</div>
+          <div className="sig-list-scroll">
+            {SIG_DENOMINATORS.map(d => (
+              <button key={d}
+                ref={el => { denRefs.current[d] = el; }}
+                className={`sig-list-item ${den === d ? 'active' : ''}`}
+                onClick={() => apply(num, d)}>
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <button className="sig-ok-btn" onClick={() => { onCommit([num, den]); onClose(); }}>OK</button>
+    </div>
+  );
+};
+
 interface TransportPanelProps {
   toggleInspector: () => void;
+  toggleMixer: () => void;
   onPlay: () => void;
   onStop: () => void;
   onReturnToZero: () => void;
@@ -35,7 +182,7 @@ const toBarsBeats = (seconds: number, tempo: number): string => {
 };
 
 const TransportPanel: React.FC<TransportPanelProps> = ({
-  toggleInspector, onPlay, onStop, onReturnToZero, onRecord,
+  toggleInspector, toggleMixer, onPlay, onStop, onReturnToZero, onRecord,
   userRole, isStreaming = false, isReceiving = false, onToggleStream,
 }) => {
   const { state, dispatch, currentTimeRef } = useDaw();
@@ -44,6 +191,23 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
   const timeDisplayRef = useRef<HTMLDivElement>(null);
   const barsDisplayRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  const [showTempoPop, setShowTempoPop] = useState(false);
+  const [showSigPop,   setShowSigPop]   = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimerRef.current !== null) { clearTimeout(closeTimerRef.current); closeTimerRef.current = null; }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimerRef.current = setTimeout(() => { setShowTempoPop(false); setShowSigPop(false); }, 200);
+  };
+  const openTempo = () => { cancelClose(); setShowSigPop(false); setShowTempoPop(true); };
+  const openSig   = () => { cancelClose(); setShowTempoPop(false); setShowSigPop(true); };
+
+  const commitTempo = useCallback((v: number) => dispatch({ type: 'SET_TEMPO', payload: v }), [dispatch]);
+  const commitSig   = useCallback((s: [number,number]) => dispatch({ type: 'SET_TIME_SIGNATURE', payload: s }), [dispatch]);
 
   // Update time display at 60fps via direct DOM — no React re-renders
   useEffect(() => {
@@ -65,10 +229,13 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
 
       {/* Center: all main transport controls */}
       <div className="transport-main-controls">
-        {/* Layout toggle */}
+        {/* Layout toggles */}
         <div className="transport-section">
           <button className="transport-btn layout-btn" onClick={toggleInspector} title="Toggle Inspector">
             <LayoutPanelLeft size={18} />
+          </button>
+          <button className="transport-btn layout-btn" onClick={toggleMixer} title="Toggle Mixer">
+            <LayoutPanelTop size={18} />
           </button>
         </div>
 
@@ -119,15 +286,37 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
         </div>
 
         {/* Tempo & Signature */}
-        <div className="transport-section tempo-section">
-          <div className="tempo-box">
+        <div className="transport-section tempo-section" style={{ position: 'relative' }}>
+          <div
+            className={`tempo-box ${showTempoPop ? 'active-pop' : ''}`}
+            title="Hover to edit tempo"
+            onMouseEnter={openTempo}
+            onMouseLeave={scheduleClose}
+            onWheel={e => {
+              e.preventDefault();
+              const delta = e.shiftKey ? 0.1 : 1;
+              const next = Math.min(400, Math.max(20, tempo + (e.deltaY < 0 ? delta : -delta)));
+              commitTempo(Math.round(next * 10) / 10);
+            }}
+          >
             <span className="label">TEMPO</span>
             <span className="value">{tempo.toFixed(1)}</span>
           </div>
-          <div className="tempo-box">
+          {showTempoPop && (
+            <TempoPopover tempo={tempo} onClose={() => setShowTempoPop(false)} onCommit={commitTempo} onMouseEnter={cancelClose} onMouseLeave={scheduleClose} />
+          )}
+          <div
+            className={`tempo-box ${showSigPop ? 'active-pop' : ''}`}
+            title="Hover to edit time signature"
+            onMouseEnter={openSig}
+            onMouseLeave={scheduleClose}
+          >
             <span className="label">SIGNATURE</span>
             <span className="value">{timeSignature[0]}/{timeSignature[1]}</span>
           </div>
+          {showSigPop && (
+            <SigPopover sig={timeSignature} onClose={() => setShowSigPop(false)} onCommit={commitSig} onMouseEnter={cancelClose} onMouseLeave={scheduleClose} />
+          )}
           <div className={`tempo-box click-box ${state.transport.metronomeOn ? 'active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_METRONOME' })} style={{ cursor: 'pointer' }}>
             <span className="label">CLICK</span>
             <span className="value" style={{ color: state.transport.metronomeOn ? '#ff4d4d' : undefined }}>

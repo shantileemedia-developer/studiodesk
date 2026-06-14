@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { ZoomIn, ZoomOut, MousePointer2, Crosshair, Scissors, Eraser, VolumeX, Pencil } from 'lucide-react';
+import { ZoomIn, ZoomOut, MousePointer2, Crosshair, Scissors, Eraser, VolumeX, Pencil, FolderPlus } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
 import type { ActiveTool, Region, PoolItem } from '../../context/DawContext';
 import WaveformDisplay from './WaveformDisplay';
@@ -44,7 +44,7 @@ const TOOL_CURSORS: Record<ActiveTool, string> = {
 const MINI_TOOLS: { id: ActiveTool; label: string; icon: React.ReactNode }[] = [
   { id: 'select', label: 'Select [1]',  icon: <MousePointer2 size={15} /> },
   { id: 'range',  label: 'Range [2]',   icon: <Crosshair size={15} /> },
-  { id: 'split',  label: 'Split [3]',   icon: <Scissors size={15} /> },
+  { id: 'split',  label: 'Split [3]',   icon: <Scissors size={15} style={{ transform: 'rotate(-90deg)' }} /> },
   { id: 'render', label: 'Glue [4]',    icon: <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 c-2 0-3.5 1.5-3.5 3.5 c0 1 0.4 1.9 1 2.5 L3 14.5 a1 1 0 0 0 0 1.4 l1.4 1.4 a1 1 0 0 0 1.4 0 L12 11 c0.6 0.6 1.5 1 2.5 1 c2 0 3.5-1.5 3.5-3.5 S14 2 12 2z"/><line x1="3" y1="17" x2="2" y2="21"/><circle cx="2.5" cy="22" r="1" fill="currentColor" stroke="none"/></svg> },
   { id: 'erase',  label: 'Erase [5]',   icon: <Eraser size={15} /> },
   { id: 'zoom',   label: 'Zoom [6]',    icon: <ZoomIn size={15} /> },
@@ -59,10 +59,17 @@ function toBars(seconds: number, tempo: number) {
   return `${bar}.${beat}`;
 }
 
+function formatPlayheadTime(secs: number): string {
+  const m  = Math.floor(secs / 60);
+  const s  = Math.floor(secs % 60);
+  const ms = Math.floor((secs % 1) * 1000);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
 // ── Component ────────────────────────────────────────────────────────
 const ArrangeWindow = () => {
   const { state, dispatch, currentTimeRef, recordingStartTimeRef, livePeaksRef, audioDirHandle } = useDaw();
-  const { tracks, regions, activeTool, selectedRegionId, markers } = state;
+  const { tracks, regions, activeTool, selectedRegionId, selectedTrackId, markers } = state;
   const { tempo, isLooping, loopStart, loopEnd, punchIn, punchOut } = state.transport;
 
   const [zoom, setZoom]           = useState(1);
@@ -90,7 +97,16 @@ const ArrangeWindow = () => {
     if (!on || value === 'Off') return t;
     const den = parseInt(value.split('/')[1], 10);
     const snapSec = 240 / bpm / den;
-    return Math.round(t / snapSec) * snapSec;
+    const gridSnapped = Math.round(t / snapSec) * snapSec;
+
+    // Snap to clip edges within 8px
+    const thresh = 8 / pxPerSecRef.current;
+    for (const region of regionsRef.current) {
+      if (Math.abs(t - region.startTime) < thresh) return region.startTime;
+      const end = region.startTime + region.duration;
+      if (Math.abs(t - end) < thresh) return end;
+    }
+    return gridSnapped;
   };
   const applySnapRef = useRef(applySnap);
   applySnapRef.current = applySnap;
@@ -160,6 +176,40 @@ const ArrangeWindow = () => {
   const hoverEdgeRef = useRef(hoverEdge);
   hoverEdgeRef.current = hoverEdge;
 
+  // ── Slip editing (Alt+drag shifts audioOffset inside fixed clip window) ──
+  type SlipState = {
+    regionId: string;
+    origAudioOffset: number;
+    origDuration: number;
+    origSourceDuration: number | undefined;
+    mouseX: number;
+  };
+  const slipRef       = useRef<SlipState | null>(null);
+  const slipValRef    = useRef<number>(0);
+  const [slipId, setSlipId] = useState<string | null>(null);
+  const [slipOffsets, setSlipOffsets] = useState<Record<string, number>>({});
+
+  // ── Clip rename inline ───────────────────────────────────────────
+  const [renamingRegionId, setRenamingRegionId] = useState<string | null>(null);
+  const [renameInput, setRenameInput]           = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Fade drag ────────────────────────────────────────────────────
+  type FadeDragState = {
+    regionId: string;
+    type: 'fadeIn' | 'fadeOut';
+    origFade: number;
+    origDuration: number;
+    mouseX: number;
+  };
+  const fadeDragRef  = useRef<FadeDragState | null>(null);
+  const [fadingId, setFadingId] = useState<string | null>(null);
+  const [fadePreviews, setFadePreviews] = useState<Record<string, { fadeIn?: number; fadeOut?: number }>>({});
+
+  // ── Clip right-click context menu ───────────────────────────────
+  const [clipMenu, setClipMenu] = useState<{ x: number; y: number; region: Region } | null>(null);
+  const clipMenuRef = useRef<HTMLDivElement>(null);
+
   // File-drag ghost preview
   const [fileGhost, setFileGhost] = useState<{
     trackIdx: number;
@@ -172,9 +222,11 @@ const ArrangeWindow = () => {
   const contentScrollRef  = useRef<HTMLDivElement>(null);
   const rulerInnerRef     = useRef<HTMLDivElement>(null);
   const timeRulerInnerRef = useRef<HTMLDivElement>(null);
-  const playheadRulerRef  = useRef<HTMLDivElement>(null);
-  const playheadLineRef   = useRef<HTMLDivElement>(null);
-  const rafRef            = useRef<number | null>(null);
+  const playheadRulerRef      = useRef<HTMLDivElement>(null);
+  const playheadLineRef       = useRef<HTMLDivElement>(null);
+  // Imperative — created in useEffect so React never owns/clears this element
+  const playheadTimeDisplayRef = useRef<HTMLDivElement | null>(null);
+  const rafRef                = useRef<number | null>(null);
   const zoomRef           = useRef(zoom);
   zoomRef.current         = zoom;
 
@@ -290,33 +342,189 @@ const ArrangeWindow = () => {
         return;
       }
 
-      // B = Bounce selected region (skip if stereo track — DawWorkspace handles version switch for B there)
-      if ((e.key === 'b' || e.key === 'B') && !e.shiftKey) {
-        const selTrack = tracksRef.current.find(tk => tk.id === stateRef.current.selectedTrackId);
-        if (selTrack?.type !== 'stereo') {
-          const regionId = stateRef.current.selectedRegionId;
-          const region   = regionsRef.current.find(r => r.id === regionId);
-          if (region?.audioUrl) {
-            void (async () => {
-              try {
-                const res   = await fetch(region.audioUrl);
-                const ab    = await res.arrayBuffer();
-                const ctx2  = new AudioContext();
-                const buf   = await ctx2.decodeAudioData(ab.slice(0));
-                const { left: peaks, right: peaksR } = await generatePeaksStereo(buf);
-                ctx2.close();
-                const blobNew     = new Blob([ab], { type: 'audio/webm' });
-                const bounceName  = `Bounce_${region.name}`;
-                const newUrl      = await uploadAudioToSupabase(blobNew, `${bounceName}_${Date.now()}.webm`);
-                const stamp       = Date.now();
-                const newPoolItem: PoolItem = { id: `pool_bnc_${stamp}`, name: bounceName, audioUrl: newUrl, duration: region.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR };
-                const newRegion: Region = { ...region, id: `region_bnc_${stamp}`, name: bounceName, audioUrl: newUrl, waveformPeaks: peaks, waveformPeaksR: peaksR };
-                dispatch({ type: 'BOUNCE_REGIONS', payload: { regionIds: [region.id], newRegion, newPoolItem } });
-              } catch (err) { console.error('Bounce failed', err); }
-            })();
+      // Ctrl+D = duplicate selected region, placed immediately after
+      if ((e.key === 'd' || e.key === 'D') && e.ctrlKey) {
+        e.preventDefault();
+        const regionId = stateRef.current.selectedRegionId;
+        const region   = regionsRef.current.find(r => r.id === regionId);
+        if (region) {
+          const dup: Region = {
+            ...region,
+            id:        `region_dup_${Date.now()}`,
+            startTime: region.startTime + region.duration,
+          };
+          dispatch({ type: 'ADD_REGION', payload: dup });
+          dispatch({ type: 'SELECT_REGION', payload: dup.id });
+        }
+        return;
+      }
+
+      // X = Split selected region at cursor position (#3 editing reference point)
+      if (e.key === 'x' || e.key === 'X') {
+        const regionId = stateRef.current.selectedRegionId;
+        const region   = regionsRef.current.find(r => r.id === regionId);
+        if (region) {
+          const splitTime = currentTimeRef.current;
+          if (splitTime > region.startTime && splitTime < region.startTime + region.duration) {
+            dispatch({ type: 'SPLIT_REGION', payload: { regionId: region.id, splitTime } });
           }
+        }
+        return;
+      }
+
+      // I / O = set loop in / out point at cursor (#4 selection anchor)
+      if (e.key === 'i' || e.key === 'I') {
+        const cur = currentTimeRef.current;
+        const end = stateRef.current.transport.loopEnd;
+        dispatch({ type: 'SET_LOOP_RANGE', payload: { start: cur, end: Math.max(cur + 0.5, end) } });
+        if (!stateRef.current.transport.isLooping) dispatch({ type: 'TOGGLE_LOOP' });
+        return;
+      }
+      if (e.key === 'o' || e.key === 'O') {
+        const cur   = currentTimeRef.current;
+        const start = stateRef.current.transport.loopStart;
+        dispatch({ type: 'SET_LOOP_RANGE', payload: { start: Math.min(start, Math.max(0, cur - 0.5)), end: cur } });
+        if (!stateRef.current.transport.isLooping) dispatch({ type: 'TOGGLE_LOOP' });
+        return;
+      }
+
+      // B = Bounce selected clip (any track type). Renders visible window + fades to a new WAV.
+      // Shift+B = Bounce entire selected track (all clips in loop range, or full track if no loop).
+      if (e.key === 'b' || e.key === 'B') {
+        if (e.shiftKey) {
+          // ── Shift+B: track / range bounce ──────────────────────────
+          const selectedTrackId = stateRef.current.selectedTrackId;
+          const selTrack = tracksRef.current.find(t => t.id === selectedTrackId);
+          if (!selTrack) return;
+
+          const { isLooping, loopStart, loopEnd } = stateRef.current.transport;
+          const hasLoop = isLooping && loopEnd > loopStart;
+
+          const trackRegions = regionsRef.current.filter(r =>
+            r.trackId === selectedTrackId &&
+            r.versionId === selTrack.activeVersionId &&
+            r.audioUrl &&
+            (!hasLoop || (r.startTime < loopEnd && r.startTime + r.duration > loopStart))
+          );
+          if (trackRegions.length === 0) return;
+
+          const rangeStart = hasLoop ? loopStart : Math.min(...trackRegions.map(r => r.startTime));
+          const rangeEnd   = hasLoop ? loopEnd   : Math.max(...trackRegions.map(r => r.startTime + r.duration));
+          const rangeDur   = rangeEnd - rangeStart;
+
+          void (async () => {
+            try {
+              const SR = 48000;
+              const offCtx = new OfflineAudioContext(2, Math.ceil(rangeDur * SR), SR);
+
+              await Promise.all(trackRegions.map(async (region) => {
+                const clipRenderStart = Math.max(0, region.startTime - rangeStart);
+                const timeInto  = Math.max(0, rangeStart - region.startTime);
+                const fileOff   = (region.audioOffset ?? 0) + timeInto;
+                const clipDur   = region.duration - timeInto;
+                if (clipDur <= 0) return;
+
+                const res = await fetch(region.audioUrl);
+                const ab  = await res.arrayBuffer();
+                const srcBuf = await offCtx.decodeAudioData(ab);
+                const src = offCtx.createBufferSource();
+                src.buffer = srcBuf;
+
+                const fg = offCtx.createGain();
+                const fi = region.fadeIn  ?? 0;
+                const fo = region.fadeOut ?? 0;
+                fg.gain.setValueAtTime(fi > 0 ? 0 : 1, clipRenderStart);
+                if (fi > 0) fg.gain.linearRampToValueAtTime(1, clipRenderStart + fi);
+                if (fo > 0) {
+                  fg.gain.setValueAtTime(1, clipRenderStart + clipDur - fo);
+                  fg.gain.linearRampToValueAtTime(0, clipRenderStart + clipDur);
+                }
+                src.connect(fg);
+                fg.connect(offCtx.destination);
+                src.start(clipRenderStart, fileOff, clipDur);
+              }));
+
+              const rendered   = await offCtx.startRendering();
+              const { left: peaks, right: peaksR } = await generatePeaksStereo(rendered);
+              const wavAb      = audioBufferToWav(rendered);
+              const wavBlob    = new Blob([wavAb], { type: 'audio/wav' });
+              const blobUrl    = URL.createObjectURL(wavBlob);
+              const bounceName = `Bounce_${selTrack.name}`;
+              const stamp      = Date.now();
+              const newUrl     = await uploadAudioToSupabase(wavBlob, `${bounceName}_${stamp}.wav`) || blobUrl;
+
+              const bncPoolId = `pool_bnc_${stamp}`;
+              dispatch({ type: 'BOUNCE_REGIONS', payload: {
+                regionIds: trackRegions.map(r => r.id),
+                newPoolItem: { id: bncPoolId, name: bounceName, audioUrl: newUrl, duration: rangeDur, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR },
+                newRegion: {
+                  id: `region_bnc_${stamp}`, poolItemId: bncPoolId,
+                  trackId: selectedTrackId, versionId: selTrack.activeVersionId,
+                  startTime: rangeStart, duration: rangeDur, name: bounceName,
+                  audioUrl: newUrl, waveformPeaks: peaks, waveformPeaksR: peaksR,
+                  sourcePeaks: peaks, sourcePeaksR: peaksR,
+                  audioOffset: 0, sourceDuration: rangeDur,
+                  fadeIn: undefined, fadeOut: undefined,
+                },
+              }});
+            } catch (err) { console.error('[Bounce Track]', err); }
+          })();
           return;
         }
+
+        // ── B: single clip bounce ───────────────────────────────────
+        const regionId = stateRef.current.selectedRegionId;
+        const region   = regionsRef.current.find(r => r.id === regionId);
+        if (region?.audioUrl) {
+          void (async () => {
+            try {
+              const SR     = 48000;
+              const offCtx = new OfflineAudioContext(2, Math.ceil(region.duration * SR), SR);
+              const res    = await fetch(region.audioUrl);
+              const ab     = await res.arrayBuffer();
+              const srcBuf = await offCtx.decodeAudioData(ab);
+              const src    = offCtx.createBufferSource();
+              src.buffer   = srcBuf;
+
+              const fg = offCtx.createGain();
+              const fi = region.fadeIn  ?? 0;
+              const fo = region.fadeOut ?? 0;
+              fg.gain.setValueAtTime(fi > 0 ? 0 : 1, 0);
+              if (fi > 0) fg.gain.linearRampToValueAtTime(1, fi);
+              if (fo > 0) {
+                fg.gain.setValueAtTime(1, region.duration - fo);
+                fg.gain.linearRampToValueAtTime(0, region.duration);
+              }
+              src.connect(fg);
+              fg.connect(offCtx.destination);
+              src.start(0, region.audioOffset ?? 0, region.duration);
+              const rendered = await offCtx.startRendering();
+
+              const { left: peaks, right: peaksR } = await generatePeaksStereo(rendered);
+              const wavAb      = audioBufferToWav(rendered);
+              const wavBlob    = new Blob([wavAb], { type: 'audio/wav' });
+              const blobUrl    = URL.createObjectURL(wavBlob);
+              const bounceName = `Bounce_${region.name}`;
+              const stamp      = Date.now();
+              const newUrl     = await uploadAudioToSupabase(wavBlob, `${bounceName}_${stamp}.wav`) || blobUrl;
+
+              const bncPoolId = `pool_bnc_${stamp}`;
+              dispatch({ type: 'BOUNCE_REGIONS', payload: {
+                regionIds: [region.id],
+                newPoolItem: { id: bncPoolId, name: bounceName, audioUrl: newUrl, duration: region.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR },
+                newRegion: {
+                  ...region, id: `region_bnc_${stamp}`, poolItemId: bncPoolId,
+                  name: bounceName, audioUrl: newUrl,
+                  waveformPeaks: peaks, waveformPeaksR: peaksR,
+                  sourcePeaks: peaks, sourcePeaksR: peaksR,
+                  audioOffset: 0, sourceDuration: region.duration,
+                  fadeIn: undefined, fadeOut: undefined,
+                },
+              }});
+            } catch (err) { console.error('[Bounce Clip]', err); }
+          })();
+        }
+        return;
       }
 
       if (toolMap[e.key]) dispatch({ type: 'SET_TOOL', payload: toolMap[e.key] });
@@ -351,19 +559,53 @@ const ArrangeWindow = () => {
       const ctx2d = canvas.getContext('2d');
       if (!ctx2d || peaks.length === 0) return;
       ctx2d.clearRect(0, 0, w, h);
-      ctx2d.fillStyle = 'rgba(255, 130, 130, 0.9)';
-      const pxPerPeak = w / peaks.length;
+      
       const mid = h / 2;
-      peaks.forEach((peak, i) => {
-        const barH = Math.max(1, peak * h * 0.85);
-        ctx2d.fillRect(i * pxPerPeak, mid - barH / 2, Math.max(1, pxPerPeak - 0.5), barH);
-      });
+      const n = peaks.length;
+      
+      ctx2d.beginPath();
+      ctx2d.moveTo(0, mid);
+      // Top envelope
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * w || 0;
+        const p = peaks[i];
+        ctx2d.lineTo(x, mid - Math.max(0, p) * (h / 2 - 1) * 0.95);
+      }
+      // Bottom envelope
+      for (let i = n - 1; i >= 0; i--) {
+        const x = (i / (n - 1)) * w || 0;
+        const p = peaks[i];
+        ctx2d.lineTo(x, mid + Math.max(0, p) * (h / 2 - 1) * 0.95);
+      }
+      ctx2d.closePath();
+
+      // Sleek solid red fill for live recording
+      ctx2d.fillStyle = 'rgba(255, 100, 100, 0.5)';
+      ctx2d.fill();
     };
 
     const tick = () => {
-      const x = currentTimeRef.current * zoomRef.current * BASE_PX_PER_SEC;
+      const t = currentTimeRef.current;
+      const x = t * zoomRef.current * BASE_PX_PER_SEC;
       if (playheadRulerRef.current) playheadRulerRef.current.style.left = `${x}px`;
       if (playheadLineRef.current)  playheadLineRef.current.style.left  = `${x}px`;
+
+      // Time readout on the playhead handle (#6 transport sync / visual component)
+      if (playheadTimeDisplayRef.current) {
+        playheadTimeDisplayRef.current.textContent = formatPlayheadTime(t);
+      }
+
+      // Event highlighting — illuminate regions as cursor passes through (#12)
+      document.querySelectorAll<HTMLElement>('.audio-region[data-region-id]').forEach(el => {
+        const rId = el.dataset.regionId!;
+        const r   = regionsRef.current.find(rg => rg.id === rId);
+        const under = r ? (t >= r.startTime && t < r.startTime + r.duration) : false;
+        if (under) {
+          if (!el.classList.contains('region-under-cursor')) el.classList.add('region-under-cursor');
+        } else {
+          el.classList.remove('region-under-cursor');
+        }
+      });
 
       if (isPlayingRef.current && contentScrollRef.current) {
         const el = contentScrollRef.current;
@@ -392,6 +634,22 @@ const ArrangeWindow = () => {
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [currentTimeRef, recordingStartTimeRef, livePeaksRef]);
 
+  // Create the time readout element imperatively so React never owns or clears it.
+  // Any React-managed child would get wiped by reconciliation on every re-render.
+  useEffect(() => {
+    const ruler = playheadRulerRef.current;
+    if (!ruler) return;
+    const el = document.createElement('div');
+    el.className = 'playhead-time-readout';
+    el.textContent = '00:00.000';
+    ruler.appendChild(el);
+    playheadTimeDisplayRef.current = el;
+    return () => {
+      el.remove();
+      playheadTimeDisplayRef.current = null;
+    };
+  }, []);
+
   // Return-to-zero: scroll view back to the start when transport stops at 0
   useEffect(() => {
     if (!state.transport.isPlaying && state.transport.currentTime === 0) {
@@ -410,6 +668,17 @@ const ArrangeWindow = () => {
     return () => { clearTimeout(tid); document.removeEventListener('mousedown', h); };
   }, [miniMenu]);
 
+  // Close clip context menu on outside click
+  useEffect(() => {
+    if (!clipMenu) return;
+    const h = (e: MouseEvent) => {
+      if (clipMenuRef.current && !clipMenuRef.current.contains(e.target as Node))
+        setClipMenu(null);
+    };
+    const tid = setTimeout(() => document.addEventListener('mousedown', h), 80);
+    return () => { clearTimeout(tid); document.removeEventListener('mousedown', h); };
+  }, [clipMenu]);
+
   // ── Axis-constrained drag-to-move ───────────────────────────────
   useEffect(() => {
     if (!draggingId) return;
@@ -426,7 +695,11 @@ const ArrangeWindow = () => {
 
       if (dragRef.current.axis === 'h') {
         const rawStart = Math.max(0, dragRef.current.origStart + (e.clientX - dragRef.current.mouseX) / pxPerSecRef.current);
-        const newStart = applySnapRef.current(rawStart);
+        // Snap to grid first, then also snap to cursor position (#10 snap reference)
+        let newStart = applySnapRef.current(rawStart);
+        const phTime      = currentTimeRef.current;
+        const snapThresh  = 8 / pxPerSecRef.current; // 8px threshold
+        if (Math.abs(rawStart - phTime) < snapThresh) newStart = phTime;
         dragPosRef.current = newStart;
         setDragPreviewStart(newStart);
       } else if (dragRef.current.axis === 'v') {
@@ -489,18 +762,24 @@ const ArrangeWindow = () => {
       const dx = (e.clientX - tr.mouseX) / pxPerSecRef.current;
       let preview: { startTime: number; duration: number };
       if (tr.edge === 'right') {
-        // Cap at the source file's remaining audio (sourceDuration - audioOffset)
+        // Cap at remaining source audio (sourceDuration - audioOffset).
+        // If sourceDuration is unknown (old clip), fall back to origDuration so we never
+        // extend past a boundary we can't verify — the user should re-import or bounce first.
         const maxDur = tr.origSourceDuration != null
           ? tr.origSourceDuration - tr.origAudioOffset
-          : Infinity;
+          : tr.origDuration;
         const newDur = Math.min(maxDur, Math.max(0.1, tr.origDuration + dx));
         preview = { startTime: tr.origStartTime, duration: newDur };
       } else {
-        // left edge — shift start + audioOffset, shrink duration
-        const maxDelta = tr.origDuration - 0.1;
-        const clamped  = Math.max(-tr.origAudioOffset, Math.min(maxDelta, dx));
-        const newStart = applySnapRef.current(tr.origStartTime + clamped);
-        const actual   = newStart - tr.origStartTime;
+        // left edge — reveals hidden audio (decreases audioOffset, increases duration)
+        // Apply snap first, then clamp so snap can't push us past the source boundary.
+        const rawStart  = tr.origStartTime + Math.min(tr.origDuration - 0.1, dx);
+        const snapped   = applySnapRef.current(rawStart);
+        // Leftmost allowed: startTime - audioOffset (no audio before source file start)
+        const minStart  = Math.max(0, tr.origStartTime - tr.origAudioOffset);
+        const maxStart  = tr.origStartTime + (tr.origDuration - 0.1);
+        const newStart  = Math.max(minStart, Math.min(maxStart, snapped));
+        const actual    = newStart - tr.origStartTime;
         preview = { startTime: newStart, duration: tr.origDuration - actual };
       }
       trimPreviewRef.current = preview;
@@ -535,6 +814,92 @@ const ArrangeWindow = () => {
     };
   }, [trimmingId, dispatch]);
 
+  // ── Fade drag ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!fadingId) return;
+    const onMove = (e: MouseEvent) => {
+      const fd = fadeDragRef.current;
+      if (!fd) return;
+      const dx = (e.clientX - fd.mouseX) / pxPerSecRef.current;
+      const maxFade = fd.origDuration / 2;
+      let newFade: number;
+      if (fd.type === 'fadeIn') {
+        newFade = Math.max(0, Math.min(maxFade, fd.origFade + dx));
+      } else {
+        newFade = Math.max(0, Math.min(maxFade, fd.origFade - dx));
+      }
+      setFadePreviews(prev => ({
+        ...prev,
+        [fd.regionId]: { ...prev[fd.regionId], [fd.type]: newFade },
+      }));
+    };
+    const onUp = () => {
+      const fd = fadeDragRef.current;
+      if (fd) {
+        const preview = fadePreviews[fd.regionId];
+        if (preview) {
+          dispatch({
+            type: 'UPDATE_REGION',
+            payload: { id: fd.regionId, updates: { [fd.type]: preview[fd.type] } },
+          });
+        }
+      }
+      fadeDragRef.current = null;
+      setFadingId(null);
+      setFadePreviews({});
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [fadingId, fadePreviews, dispatch]);
+
+  // ── Slip drag ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!slipId) return;
+    const onMove = (e: MouseEvent) => {
+      const sl = slipRef.current;
+      if (!sl) return;
+      const dx       = (e.clientX - sl.mouseX) / pxPerSecRef.current;
+      // When sourceDuration is unknown, only allow slipping left (toward 0) — slipping
+      // right would require knowing there's audio past audioOffset+duration, which we don't.
+      const maxOff   = sl.origSourceDuration != null
+        ? sl.origSourceDuration - sl.origDuration
+        : sl.origAudioOffset;
+      const newOff   = Math.max(0, Math.min(maxOff, sl.origAudioOffset + dx));
+      slipValRef.current = newOff;
+      setSlipOffsets(prev => ({ ...prev, [sl.regionId]: newOff }));
+    };
+    const onUp = () => {
+      const sl = slipRef.current;
+      if (sl) {
+        const region = regionsRef.current.find(r => r.id === sl.regionId);
+        if (region) {
+          dispatch({
+            type: 'TRIM_REGION',
+            payload: {
+              regionId: sl.regionId,
+              startTime: region.startTime,
+              duration: region.duration,
+              audioOffset: slipValRef.current,
+            },
+          });
+        }
+      }
+      slipRef.current = null;
+      setSlipId(null);
+      setSlipOffsets({});
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [slipId, dispatch]);
+
   // ── Ruler pointer drag (Cubase-style scrub) ──────────────────────
   const rulerDraggingRef = useRef(false);
   const [markerDialog, setMarkerDialog] = useState<{
@@ -552,11 +917,21 @@ const ArrangeWindow = () => {
   const handleRulerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('.marker-flag')) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    rulerDraggingRef.current = true;
     const t = getTimeFromRulerPointer(e);
+
+    // Shift+click: create range selection from cursor to click point (#4 selection anchor)
+    if (e.shiftKey) {
+      const anchor = currentTimeRef.current;
+      const left   = Math.min(anchor, t) * pxPerSec;
+      const width  = Math.abs(t - anchor) * pxPerSec;
+      setRangeBox({ left, width });
+      return;
+    }
+
+    rulerDraggingRef.current = true;
     currentTimeRef.current = t;
     dispatch({ type: 'SET_CURRENT_TIME', payload: t });
-  }, [getTimeFromRulerPointer, currentTimeRef, dispatch]);
+  }, [getTimeFromRulerPointer, currentTimeRef, dispatch, pxPerSec]);
 
   const handleRulerPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!rulerDraggingRef.current) return;
@@ -580,7 +955,114 @@ const ArrangeWindow = () => {
     setMarkerDialog(null);
   }, [markerDialog, dispatch]);
 
+  // ── Crop: renders visible window to a new WAV; edges can no longer be extended ──
+  const handleCrop = useCallback(async (region: Region) => {
+    if (!region.audioUrl) return;
+    try {
+      const res    = await fetch(region.audioUrl);
+      const ab     = await res.arrayBuffer();
+      const SR     = 48000;
+      const decCtx = new AudioContext();
+      const srcBuf = await decCtx.decodeAudioData(ab);
+      await decCtx.close();
+
+      const offCtx = new OfflineAudioContext(2, Math.ceil(region.duration * SR), SR);
+      const src    = offCtx.createBufferSource();
+      src.buffer   = srcBuf;
+      src.connect(offCtx.destination);
+      src.start(0, region.audioOffset ?? 0, region.duration);
+      const rendered = await offCtx.startRendering();
+
+      const { left: peaks, right: peaksR } = await generatePeaksStereo(rendered);
+      const wavAb   = audioBufferToWav(rendered);
+      const wavBlob = new Blob([wavAb], { type: 'audio/wav' });
+      const blobUrl = URL.createObjectURL(wavBlob);
+      const cropName = `Crop_${region.name}`;
+      const stamp    = Date.now();
+      const cropPoolId = `pool_crop_${stamp}`;
+
+      dispatch({ type: 'ADD_POOL_ITEM', payload: { id: cropPoolId, name: cropName, audioUrl: blobUrl, duration: region.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR } });
+
+      uploadAudioToSupabase(wavBlob, `${cropName}_${stamp}.wav`).then(supaUrl => {
+        if (supaUrl && supaUrl !== blobUrl)
+          dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId: cropPoolId, audioUrl: supaUrl } });
+      }).catch(() => {});
+
+      if (audioDirHandle) saveToAudioFolder(audioDirHandle, cropName, rendered).catch(() => {});
+
+      // Replace the clip with the cropped audio — audioOffset=0, sourceDuration=duration (no expandable edges)
+      dispatch({
+        type: 'UPDATE_REGION',
+        payload: {
+          id: region.id,
+          updates: {
+            poolItemId: cropPoolId, audioUrl: blobUrl, name: cropName,
+            audioOffset: 0, sourceDuration: region.duration,
+            waveformPeaks: peaks, waveformPeaksR: peaksR,
+            sourcePeaks: peaks, sourcePeaksR: peaksR,
+            fadeIn: undefined, fadeOut: undefined,
+          },
+        },
+      });
+    } catch (err) { console.error('[Crop]', err); }
+  }, [dispatch, audioDirHandle]);
+
   // Right-click → mini toolbox
+  const handleImportAudio = useCallback(() => {
+    const track = tracks.find(t => t.id === selectedTrackId);
+    if (!track) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      try {
+        const actx = new AudioContext();
+        const buf = await actx.decodeAudioData(await file.arrayBuffer());
+        const { left: peaks, right: rawPeaksR } = await generatePeaksStereo(buf);
+        const peaksR = track.type === 'stereo' ? rawPeaksR : null;
+        const duration = buf.duration;
+        await actx.close();
+        const poolItemId = `pool_${Date.now()}`;
+        const poolItem: PoolItem = {
+          id: poolItemId,
+          name: file.name.replace(/\.[^.]+$/, ''),
+          audioUrl: url,
+          localFileName: file.name,
+          duration,
+          createdAt: new Date(),
+          waveformPeaks: peaks,
+          waveformPeaksR: rawPeaksR ?? undefined,
+        };
+        dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
+        dispatch({
+          type: 'ADD_REGION',
+          payload: {
+            id: `r_${Date.now()}`,
+            poolItemId,
+            trackId: track.id,
+            versionId: track.activeVersionId,
+            startTime: currentTimeRef.current,
+            duration,
+            name: poolItem.name,
+            audioUrl: url,
+            waveformPeaks: peaks,
+            waveformPeaksR: peaksR ?? undefined,
+            sourceDuration: duration,
+            sourcePeaks: peaks,
+            sourcePeaksR: rawPeaksR ?? undefined,
+          },
+        });
+        if (audioDirHandle) {
+          try { await saveToAudioFolder(audioDirHandle, poolItem.name, buf); } catch {}
+        }
+      } catch { /* decode failed */ }
+    };
+    input.click();
+  }, [tracks, selectedTrackId, dispatch, currentTimeRef, audioDirHandle]);
+
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     setMiniMenu({ x: e.clientX, y: e.clientY });
@@ -595,8 +1077,28 @@ const ArrangeWindow = () => {
       case 'select': {
         e.preventDefault();
         dispatch({ type: 'SELECT_REGION', payload: region.id });
-        const edge = hoverEdgeRef.current?.regionId === region.id ? hoverEdgeRef.current.edge : null;
-        if (edge) {
+        // Detect edge directly from click coords — don't rely solely on hover state,
+        // which may not be set if the user clicked without a preceding mousemove.
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const distL = e.clientX - rect.left;
+        const distR = rect.right - e.clientX;
+        const edgeAtClick: 'left' | 'right' | null =
+          distL <= EDGE_PX ? 'left' : distR <= EDGE_PX ? 'right' : null;
+        const edge = edgeAtClick ?? (hoverEdgeRef.current?.regionId === region.id ? hoverEdgeRef.current.edge : null);
+
+        if (e.altKey && !edge) {
+          // Alt+drag = slip edit: shift audio content inside the fixed clip window
+          slipRef.current = {
+            regionId: region.id,
+            origAudioOffset: region.audioOffset ?? 0,
+            origDuration: region.duration,
+            origSourceDuration: region.sourceDuration,
+            mouseX: e.clientX,
+          };
+          slipValRef.current = region.audioOffset ?? 0;
+          setSlipId(region.id);
+          setSlipOffsets({ [region.id]: region.audioOffset ?? 0 });
+        } else if (edge) {
           // Start edge trim
           trimRef.current = {
             regionId: region.id,
@@ -691,12 +1193,13 @@ const ArrangeWindow = () => {
             const stamp     = Date.now();
             const name      = region.name;
 
+            const gluePoolId = `pool_glue_${stamp}`;
             dispatch({
               type: 'BOUNCE_REGIONS',
               payload: {
                 regionIds: [region.id, next.id],
-                newPoolItem: { id: `pool_glue_${stamp}`, name, audioUrl: blobUrl, duration: totalDur, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR },
-                newRegion:   { id: `region_glue_${stamp}`, trackId: region.trackId, versionId: region.versionId, startTime: mergedStart, duration: totalDur, name, audioUrl: blobUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, audioOffset: 0, sourceDuration: totalDur },
+                newPoolItem: { id: gluePoolId, name, audioUrl: blobUrl, duration: totalDur, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR },
+                newRegion:   { id: `region_glue_${stamp}`, poolItemId: gluePoolId, trackId: region.trackId, versionId: region.versionId, startTime: mergedStart, duration: totalDur, name, audioUrl: blobUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, audioOffset: 0, sourceDuration: totalDur },
               },
             });
           } catch (err) {
@@ -844,7 +1347,7 @@ const ArrangeWindow = () => {
 
         // Pool stores raw stereo peaks so the file can be reused on any track type later
         dispatch({ type: 'ADD_POOL_ITEM', payload: { id: poolItemId, name, audioUrl, localFileName: file.name, duration: buf.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: rawPeaksR } });
-        dispatch({ type: 'ADD_REGION',    payload: { id: `region_${Date.now()}`, trackId: target.id, versionId: target.activeVersionId, startTime, duration: buf.duration, name, audioUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, sourceDuration: buf.duration } });
+        dispatch({ type: 'ADD_REGION',    payload: { id: `region_${Date.now()}`, poolItemId, trackId: target.id, versionId: target.activeVersionId, startTime, duration: buf.duration, name, audioUrl, waveformPeaks: peaks, waveformPeaksR: peaksR, sourceDuration: buf.duration, sourcePeaks: peaks, sourcePeaksR: rawPeaksR } });
 
         // Save as 24-bit WAV into the project's Audio/ folder
         if (audioDirHandle) {
@@ -860,6 +1363,39 @@ const ArrangeWindow = () => {
         }).catch(() => {});
       } catch { /* skip undecodable */ }
     }
+  };
+
+  // ── Display peaks: slice sourcePeaks by audioOffset/sourceDuration for correct waveform ──
+  // liveOffset   overrides audioOffset (slip editing)
+  // liveDuration overrides region.duration (live trim preview — shows revealed audio, not a stretch)
+  const getDisplayPeaks = (region: Region, liveOffset?: number, liveDuration?: number): number[] => {
+    const sp = region.sourcePeaks;
+    const sd = region.sourceDuration;
+    if (sp && sp.length > 0 && sd && sd > 0) {
+      const off = liveOffset ?? (region.audioOffset ?? 0);
+      const dur = liveDuration ?? region.duration;
+      const n   = sp.length;
+      const s   = Math.floor((off / sd) * n);
+      const e2  = Math.ceil(((off + dur) / sd) * n);
+      const sl  = sp.slice(Math.max(0, s), Math.min(n, e2));
+      return sl.length > 0 ? sl : region.waveformPeaks;
+    }
+    return region.waveformPeaks;
+  };
+
+  const getDisplayPeaksR = (region: Region, liveOffset?: number, liveDuration?: number): number[] | null | undefined => {
+    const sp = region.sourcePeaksR;
+    const sd = region.sourceDuration;
+    if (sp && sp.length > 0 && sd && sd > 0) {
+      const off = liveOffset ?? (region.audioOffset ?? 0);
+      const dur = liveDuration ?? region.duration;
+      const n   = sp.length;
+      const s   = Math.floor((off / sd) * n);
+      const e2  = Math.ceil(((off + dur) / sd) * n);
+      const sl  = sp.slice(Math.max(0, s), Math.min(n, e2));
+      return sl.length > 0 ? sl : region.waveformPeaksR;
+    }
+    return region.waveformPeaksR;
   };
 
   // ── Multi-level grid (Cubase-style: bar > beat > snap subdivision) ──
@@ -941,10 +1477,20 @@ const ArrangeWindow = () => {
               style={{ left: m.time * pxPerSec, top: 0, position: 'absolute' }}
               onPointerDown={e => e.stopPropagation()}
             >
-              <span className="marker-name" onClick={(e) => {
-                e.stopPropagation();
-                setMarkerDialog({ id: m.id, name: m.name });
-              }}>{m.name}</span>
+              <span
+                className="marker-name"
+                title="Click to jump • Double-click to rename"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Jump cursor to marker position (#15 marker interaction)
+                  currentTimeRef.current = m.time;
+                  dispatch({ type: 'SET_CURRENT_TIME', payload: m.time });
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setMarkerDialog({ id: m.id, name: m.name });
+                }}
+              >{m.name}</span>
               <button
                 className="marker-delete-btn"
                 onClick={(e) => { e.stopPropagation(); dispatch({ type: 'REMOVE_MARKER', payload: m.id }); }}
@@ -1074,10 +1620,12 @@ const ArrangeWindow = () => {
                     const isSelected     = selectedRegionId === region.id;
                     const isBeingDragged = draggingId === region.id;
                     const isEdgeHovered  = hoverEdge?.regionId === region.id;
+                    const isStereo       = region.waveformPeaksR && region.waveformPeaksR.length > 0;
 
                     return (
                       <div
                         key={region.id}
+                        data-region-id={region.id}
                         className={[
                           'audio-region',
                           region.isMuted    ? 'region-muted'    : '',
@@ -1088,8 +1636,9 @@ const ArrangeWindow = () => {
                         style={{
                           left:            displayStart * pxPerSec,
                           width:           Math.max(4, displayDur * pxPerSec),
-                          backgroundColor: `${track.color}22`,
-                          borderColor:     isSelected ? '#fff' : region.isMuted ? '#555' : track.color,
+                          backgroundColor: '#26272b',
+                          borderColor:     isSelected ? '#fff' : track.color,
+                          borderRadius:    2,
                           cursor:          activeTool === 'select'
                                             ? (isTrimming || isEdgeHovered ? 'ew-resize' : isBeingDragged ? 'grabbing' : 'grab')
                                             : TOOL_CURSORS[activeTool],
@@ -1098,30 +1647,163 @@ const ArrangeWindow = () => {
                         draggable={false}
                         onMouseDown={e => handleRegionMouseDown(e, region)}
                         onMouseMove={e => handleRegionMouseMove(e, region)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation(); // prevent the arrange-window mini toolbox
+                          setClipMenu({ x: e.clientX, y: e.clientY, region });
+                        }}
                         onMouseLeave={() => {
                           if (activeTool === 'split') setSplitPreview(null);
                           if (hoverEdge?.regionId === region.id) setHoverEdge(null);
                         }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          if (activeTool === 'select') {
+                            setRenamingRegionId(region.id);
+                            setRenameInput(region.name);
+                            setTimeout(() => renameInputRef.current?.select(), 30);
+                          }
+                        }}
                       >
-                        <span className="region-name" style={{ color: region.isMuted ? '#666' : '#fff' }}>
-                          {region.isMuted ? '(muted) ' : ''}{region.name}
-                        </span>
-                        {region.waveformPeaks.length > 0 && (
-                          <div className="region-waveform">
-                            <WaveformDisplay
-                              peaks={region.waveformPeaks}
-                              peaksR={region.waveformPeaksR ?? null}
-                              color={region.isMuted ? '#555' : track.color}
-                              isPlaying={state.transport.isPlaying}
+                        {/* Name bar */}
+                        <div
+                          className="region-name-bar"
+                          style={{ backgroundColor: region.isMuted ? 'rgba(60,60,60,0.85)' : `${track.color}dd` }}
+                        >
+                          {renamingRegionId === region.id ? (
+                            <input
+                              ref={renameInputRef}
+                              className="region-rename-input"
+                              value={renameInput}
+                              onChange={e => setRenameInput(e.target.value)}
+                              onBlur={() => {
+                                const name = renameInput.trim() || region.name;
+                                dispatch({ type: 'RENAME_REGION', payload: { id: region.id, name } });
+                                setRenamingRegionId(null);
+                              }}
+                              onKeyDown={e => {
+                                e.stopPropagation();
+                                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                                if (e.key === 'Escape') { setRenamingRegionId(null); }
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              onMouseDown={e => e.stopPropagation()}
+                              style={{ height: '100%', fontSize: '10px' }}
                             />
-                          </div>
-                        )}
+                          ) : (
+                            <span className="region-name">
+                              {region.isMuted ? '(muted) ' : ''}{region.name}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Fade-in overlay */}
+                        {(() => {
+                          const fi = fadePreviews[region.id]?.fadeIn ?? region.fadeIn ?? 0;
+                          return fi > 0 ? (
+                            <div className="fade-overlay fade-in-overlay" style={{ width: fi * pxPerSec }} />
+                          ) : null;
+                        })()}
+
+                        {/* Fade-out overlay */}
+                        {(() => {
+                          const fo = fadePreviews[region.id]?.fadeOut ?? region.fadeOut ?? 0;
+                          return fo > 0 ? (
+                            <div className="fade-overlay fade-out-overlay" style={{ width: fo * pxPerSec }} />
+                          ) : null;
+                        })()}
+
+                        {/* Fade-in drag handle */}
+                        <div
+                          className="fade-handle fade-in-handle"
+                          title="Drag to set Fade In"
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            fadeDragRef.current = {
+                              regionId: region.id,
+                              type: 'fadeIn',
+                              origFade: region.fadeIn ?? 0,
+                              origDuration: region.duration,
+                              mouseX: e.clientX,
+                            };
+                            setFadingId(region.id);
+                            setFadePreviews({ [region.id]: { fadeIn: region.fadeIn ?? 0, fadeOut: region.fadeOut ?? 0 } });
+                          }}
+                        />
+
+                        {/* Fade-out drag handle */}
+                        <div
+                          className="fade-handle fade-out-handle"
+                          title="Drag to set Fade Out"
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            fadeDragRef.current = {
+                              regionId: region.id,
+                              type: 'fadeOut',
+                              origFade: region.fadeOut ?? 0,
+                              origDuration: region.duration,
+                              mouseX: e.clientX,
+                            };
+                            setFadingId(region.id);
+                            setFadePreviews({ [region.id]: { fadeIn: region.fadeIn ?? 0, fadeOut: region.fadeOut ?? 0 } });
+                          }}
+                        />
+
+                        {region.waveformPeaks.length > 0 && (() => {
+                          // Compute live offset + duration so the waveform shows the actual
+                          // revealed audio as you drag, not a stretched version of existing peaks.
+                          const isThisTrimming = trimmingId === region.id && !!trimPreview;
+                          const tr = isThisTrimming ? trimRef.current : null;
+                          let peakOffset: number | undefined = slipOffsets[region.id];
+                          let peakDuration: number | undefined;
+                          if (isThisTrimming && tr && trimPreview) {
+                            peakDuration = trimPreview.duration;
+                            peakOffset = tr.edge === 'left'
+                              ? tr.origAudioOffset + (trimPreview.startTime - tr.origStartTime)
+                              : tr.origAudioOffset;
+                          }
+                          return (
+                            <div className="region-waveform">
+                              <WaveformDisplay
+                                peaks={getDisplayPeaks(region, peakOffset, peakDuration)}
+                                peaksR={getDisplayPeaksR(region, peakOffset, peakDuration)}
+                                color={region.isMuted ? '#555' : (region.color ?? track.color)}
+                                isPlaying={state.transport.isPlaying}
+                                isSelected={isSelected}
+                              />
+                            </div>
+                          );
+                        })()}
                         {activeTool === 'split' && splitPreview?.regionId === region.id && (
                           <div className="split-preview-line" style={{ left: splitPreview.x }} />
                         )}
                       </div>
                     );
                   })}
+
+                  {/* Crossfade overlays — rendered where adjacent clips on this track overlap */}
+                  {(() => {
+                    const sorted = [...trackRegions].sort((a, b) => a.startTime - b.startTime);
+                    const overlays: React.ReactNode[] = [];
+                    for (let i = 0; i + 1 < sorted.length; i++) {
+                      const a = sorted[i];
+                      const b = sorted[i + 1];
+                      const overlap = (a.startTime + a.duration) - b.startTime;
+                      if (overlap > 0.01) {
+                        const xfLeft = b.startTime * pxPerSec;
+                        const xfWidth = Math.min(overlap, b.duration) * pxPerSec;
+                        overlays.push(
+                          <div
+                            key={`xfade_${a.id}_${b.id}`}
+                            className="crossfade-overlay"
+                            style={{ left: xfLeft, width: xfWidth }}
+                            title={`Crossfade: ${overlap.toFixed(2)}s`}
+                          />
+                        );
+                      }
+                    }
+                    return overlays;
+                  })()}
 
                   {/* Vertical-drag ghost preview on target track */}
                   {isVDragTarget && draggedRegion && dragRef.current?.axis !== 'h' && (
@@ -1182,6 +1864,50 @@ const ArrangeWindow = () => {
         <button className="zoom-btn" onClick={() => zoomIn(currentTimeRef.current)} title="Zoom In (H)"><ZoomIn size={12} /></button>
       </div>
 
+      {/* Clip right-click context menu */}
+      {clipMenu && (
+        <div ref={clipMenuRef} className="clip-context-menu" style={{ left: clipMenu.x, top: clipMenu.y }}>
+          {[
+            {
+              label: 'Rename',
+              onClick: () => {
+                setRenamingRegionId(clipMenu.region.id);
+                setRenameInput(clipMenu.region.name);
+                setTimeout(() => renameInputRef.current?.select(), 30);
+                setClipMenu(null);
+              },
+            },
+            {
+              label: 'Duplicate',
+              onClick: () => {
+                const dup: Region = { ...clipMenu.region, id: `region_dup_${Date.now()}`, startTime: clipMenu.region.startTime + clipMenu.region.duration };
+                dispatch({ type: 'ADD_REGION', payload: dup });
+                dispatch({ type: 'SELECT_REGION', payload: dup.id });
+                setClipMenu(null);
+              },
+            },
+            {
+              label: clipMenu.region.isMuted ? 'Unmute' : 'Mute',
+              onClick: () => { dispatch({ type: 'TOGGLE_REGION_MUTE', payload: clipMenu.region.id }); setClipMenu(null); },
+            },
+            {
+              label: 'Crop to Visible',
+              onClick: () => { void handleCrop(clipMenu.region); setClipMenu(null); },
+            },
+            {
+              label: 'Delete',
+              onClick: () => {
+                dispatch({ type: 'REMOVE_REGION', payload: clipMenu.region.id });
+                if (selectedRegionId === clipMenu.region.id) dispatch({ type: 'SELECT_REGION', payload: null });
+                setClipMenu(null);
+              },
+            },
+          ].map(({ label, onClick }) => (
+            <button key={label} className="clip-menu-item" onClick={onClick}>{label}</button>
+          ))}
+        </div>
+      )}
+
       {/* Right-click mini toolbox */}
       {miniMenu && (
         <div ref={miniMenuRef} className="mini-toolbox" style={{ left: miniMenu.x, top: miniMenu.y }}>
@@ -1193,6 +1919,15 @@ const ArrangeWindow = () => {
               title={label}
             >{icon}</button>
           ))}
+          <div className="mini-toolbox-divider" />
+          <button
+            className="mini-tool-btn"
+            onClick={() => { setMiniMenu(null); handleImportAudio(); }}
+            title={selectedTrackId ? 'Import audio to selected track' : 'Select a track first'}
+            disabled={!selectedTrackId}
+          >
+            <FolderPlus size={15} />
+          </button>
         </div>
       )}
 

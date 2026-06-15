@@ -108,7 +108,64 @@
   100% { opacity: 0; transform: translate(-50%, -10px); }
 }
 
-/* ── Responsive scaling for laptops / smaller screens ── */
-@media screen and (max-width: 1440px) {
-  /* No zoom, adjusting widths directly in the component CSS instead */
+/* ── CSS Custom Properties — density + panel sizes ── */
+.daw-workspace {
+  /* Panel sizes — set via inline style from React; these are fallback defaults */
+  --inspector-w: 220px;
+  --tracklist-w: 210px;
+  --mixer-h: 320px;
+
+  /* UI density tokens — standard (default) */
+  --btn-h: 22px;
+  --btn-w: 26px;
+  --btn-font: 10px;
+  --font-track: 13px;
+  --font-label: 11px;
+  --track-pad: 7px 8px 6px;
+  --gap-sm: 4px;
+}
+
+.daw-workspace.density-compact {
+  --btn-h: 18px;
+  --btn-w: 22px;
+  --btn-font: 9px;
+  --font-track: 11px;
+  --font-label: 9px;
+  --track-pad: 4px 6px 3px;
+  --gap-sm: 3px;
+}
+
+.daw-workspace.density-large {
+  --btn-h: 28px;
+  --btn-w: 32px;
+  --btn-font: 12px;
+  --font-track: 15px;
+  --font-label: 13px;
+  --track-pad: 10px 10px 8px;
+  --gap-sm: 6px;
+}
+
+/* ── Panel resize handles ── */
+.panel-resize-handle {
+  background: transparent;
+  flex-shrink: 0;
+  z-index: 50;
+  transition: background 0.12s;
+  position: relative;
+}
+.panel-resize-handle:hover {
+  background: rgba(0, 255, 204, 0.25);
+}
+.panel-resize-handle:active {
+  background: rgba(0, 255, 204, 0.4);
+}
+.panel-resize-h {
+  width: 4px;
+  cursor: col-resize;
+  align-self: stretch;
+}
+.panel-resize-v {
+  height: 4px;
+  cursor: row-resize;
+  width: 100%;
 }

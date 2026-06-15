@@ -24,6 +24,8 @@ interface MenuBarProps {
   onOpenAudioPrefs?: () => void;
   onCloseProject?: () => void;
   onToggleLyrics?: () => void;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
 }
 
 const SHORTCUT_LIST = [
@@ -61,7 +63,7 @@ const SHORTCUT_LIST = [
 ];
 
 const MenuBar: React.FC<MenuBarProps> = ({
-  onOpenAudioPrefs, onCloseProject, onToggleLyrics,
+  onOpenAudioPrefs, onCloseProject, onToggleLyrics, isAdmin, onOpenAdmin,
 }) => {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [localToast, setLocalToast] = useState<string | null>(null);
@@ -642,6 +644,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
               title="Double-click to rename project"
               onDoubleClick={() => { setNameInput(projectName); setEditingName(true); }}
             >{projectName}</span>
+          )}
+          {isAdmin && (
+            <button className="menu-admin-btn" onClick={onOpenAdmin} title="Admin — Manage Artist Codes">
+              Admin
+            </button>
           )}
         </div>
 

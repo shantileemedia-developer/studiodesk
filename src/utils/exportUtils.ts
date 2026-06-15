@@ -308,6 +308,80 @@ export async function exportToWav(
 }
 
 /**
+ * Export only the audio between the loop locators (loopStart → loopEnd).
+ * Uses OfflineAudioContext trimmed to [loopStart, loopEnd], regions are
+ * time-shifted so the export starts at t=0.
+ */
+export async function exportBetweenLocators(
+  state: DawState,
+  filename = 'Export',
+  onProgress?: (pct: number) => void
+): Promise<void> {
+  const { loopStart, loopEnd } = state.transport;
+  if (loopEnd <= loopStart) throw new Error('Loop range is empty — set In/Out locators first.');
+
+  const { tracks, regions } = state;
+  const rangeLen   = loopEnd - loopStart;
+  const sampleRate = 48000;
+
+  const ctx = new OfflineAudioContext(2, Math.ceil(rangeLen * sampleRate), sampleRate);
+
+  const hasSolo = tracks.some(t => t.isSolo);
+  const playableTracks = new Set(
+    tracks.filter(t => !t.isMuted && (!hasSolo || t.isSolo)).map(t => t.id)
+  );
+
+  const trackBusses: Record<string, { gain: GainNode; panner: StereoPannerNode }> = {};
+  for (const track of tracks) {
+    if (!playableTracks.has(track.id)) continue;
+    const gain   = ctx.createGain();
+    const panner = ctx.createStereoPanner();
+    gain.gain.value  = isFinite(track.volume) ? track.volume : 0.8;
+    panner.pan.value = isFinite(track.pan) ? track.pan : 0;
+    gain.connect(panner);
+    panner.connect(ctx.destination);
+    trackBusses[track.id] = { gain, panner };
+  }
+
+  const playableRegions = regions.filter(r =>
+    playableTracks.has(r.trackId) &&
+    !r.isMuted &&
+    r.audioUrl &&
+    r.startTime < loopEnd &&
+    (r.startTime + r.duration) > loopStart
+  );
+
+  let completed = 0;
+  await Promise.all(playableRegions.map(async (region: Region) => {
+    try {
+      const resp = await fetch(region.audioUrl);
+      const ab   = await resp.arrayBuffer();
+      const buf  = await ctx.decodeAudioData(ab);
+      const src  = ctx.createBufferSource();
+      src.buffer = buf;
+
+      const bus = trackBusses[region.trackId];
+      if (bus) src.connect(bus.gain);
+
+      // Shift region so loopStart maps to t=0 in the output
+      const clipStart      = Math.max(loopStart, region.startTime);
+      const clipEnd        = Math.min(loopEnd, region.startTime + region.duration);
+      const destStart      = clipStart - loopStart;
+      const srcOffset      = (region.audioOffset ?? 0) + (clipStart - region.startTime);
+      const clipDuration   = clipEnd - clipStart;
+
+      src.start(destStart, srcOffset, clipDuration);
+    } catch { /* skip undecodable */ } finally {
+      completed++;
+      onProgress?.(completed / playableRegions.length);
+    }
+  }));
+
+  const rendered = await ctx.startRendering();
+  triggerDownload(encodeWav(rendered), `${filename}.wav`);
+}
+
+/**
  * Export a single audio URL (e.g. a pool item or region take) as WAV.
  * Useful for the "Download" button on individual pool items.
  */
@@ -322,6 +396,98 @@ export async function exportUrlToWav(audioUrl: string, filename = 'Take'): Promi
 
   const wav = encodeWav(buffer);
   triggerDownload(wav, `${filename}.wav`);
+}
+
+// ── Bounce region ─────────────────────────────────────────────────────────────
+
+/**
+ * Bounce a single clip to a standalone WAV (applies the clip's fade-in/out).
+ * The rendered file starts at t=0 regardless of the clip's timeline position,
+ * so it can be re-imported at any position without an offset.
+ */
+export async function bounceRegion(
+  state: DawState,
+  regionId: string,
+  onProgress?: (msg: string) => void,
+): Promise<{ blob: Blob; name: string } | null> {
+  const region = state.regions.find(r => r.id === regionId);
+  if (!region || !region.audioUrl) return null;
+
+  const sampleRate = 48000;
+  const offCtx = new OfflineAudioContext(2, Math.ceil(region.duration * sampleRate), sampleRate);
+
+  onProgress?.(`Bouncing ${region.name}…`);
+
+  try {
+    const resp = await fetch(region.audioUrl);
+    const ab   = await resp.arrayBuffer();
+    const buf  = await offCtx.decodeAudioData(ab);
+    const src  = offCtx.createBufferSource();
+    src.buffer = buf;
+
+    if (region.fadeIn || region.fadeOut) {
+      const fg = offCtx.createGain();
+      if (region.fadeIn) {
+        fg.gain.setValueAtTime(0, 0);
+        fg.gain.linearRampToValueAtTime(1, region.fadeIn);
+      } else {
+        fg.gain.setValueAtTime(1, 0);
+      }
+      if (region.fadeOut) {
+        const foStart = region.duration - region.fadeOut;
+        fg.gain.setValueAtTime(1, foStart);
+        fg.gain.linearRampToValueAtTime(0, region.duration);
+      }
+      src.connect(fg);
+      fg.connect(offCtx.destination);
+    } else {
+      src.connect(offCtx.destination);
+    }
+
+    src.start(0, region.audioOffset ?? 0, region.duration);
+    const rendered = await offCtx.startRendering();
+    return { blob: encodeWav(rendered), name: `${region.name}_bounce` };
+  } catch (err) {
+    console.error('Bounce failed:', err);
+    return null;
+  }
+}
+
+// ── Crop region ───────────────────────────────────────────────────────────────
+
+/**
+ * Crop: extract only the visible clip window from the source audio file.
+ * Strips any hidden audio before/after the clip boundaries, producing a
+ * new WAV whose duration exactly matches the clip length.
+ */
+export async function cropRegion(
+  state: DawState,
+  regionId: string,
+  onProgress?: (msg: string) => void,
+): Promise<{ blob: Blob; name: string } | null> {
+  const region = state.regions.find(r => r.id === regionId);
+  if (!region || !region.audioUrl) return null;
+
+  const sampleRate = 48000;
+  const offCtx = new OfflineAudioContext(2, Math.ceil(region.duration * sampleRate), sampleRate);
+
+  onProgress?.(`Cropping ${region.name}…`);
+
+  try {
+    const resp = await fetch(region.audioUrl);
+    const ab   = await resp.arrayBuffer();
+    const buf  = await offCtx.decodeAudioData(ab);
+    const src  = offCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(offCtx.destination);
+    // Read from audioOffset in source, write from 0 in destination
+    src.start(0, region.audioOffset ?? 0, region.duration);
+    const rendered = await offCtx.startRendering();
+    return { blob: encodeWav(rendered), name: `${region.name}_crop` };
+  } catch (err) {
+    console.error('Crop failed:', err);
+    return null;
+  }
 }
 
 function triggerDownload(blob: Blob, filename: string) {

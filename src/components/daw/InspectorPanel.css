@@ -1,6 +1,6 @@
 .inspector-panel {
-  width: 260px;
-  min-width: 200px;
+  min-width: 160px;
+  max-width: 400px;
   border-right: none !important;
   margin: 0 !important;
   border-radius: 0 !important;
@@ -293,15 +293,9 @@
   border: 1px solid #009980;
 }
 
-/* ── Responsive scaling ── */
-@media screen and (max-width: 1440px) {
-  .inspector-panel {
-    width: 200px;
-  }
-}
-@media screen and (max-width: 1280px) {
-  .inspector-panel {
-    width: 180px;
-    min-width: 180px;
-  }
+/* Width is driven by --inspector-w CSS variable set in DawWorkspace */
+.inspector-panel {
+  width: var(--inspector-w, 220px);
+  min-width: 160px;
+  max-width: 400px;
 }

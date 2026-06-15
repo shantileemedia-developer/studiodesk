@@ -1,7 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, desktopCapturer, screen as electronScreen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, desktopCapturer, screen as electronScreen, safeStorage } from 'electron';
+import nodemailer from 'nodemailer';
 import { autoUpdater } from 'electron-updater';
 import path from 'path';
 import fs from 'fs';
+import { NativeAudioEngine, nativeAudioAvailable } from './audioEngine';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
@@ -130,6 +132,13 @@ const createWindow = () => {
         }
       });
     }
+  });
+
+  // Grant camera and microphone permissions — required in packaged Electron builds
+  // where the default permission handler blocks getUserMedia requests.
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    const allowed = ['media', 'camera', 'microphone', 'display-capture', 'audioCapture', 'videoCapture'];
+    callback(allowed.includes(permission));
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -330,6 +339,133 @@ ipcMain.handle('rc:get-sources', async () => {
   }));
 });
 
+// ── Native Audio Engine ──────────────────────────────────────────────────────
+
+const engine = new NativeAudioEngine();
+
+/** Forward engine events to the focused renderer window. */
+function sendToRenderer(channel: string, ...args: any[]) {
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) w.webContents.send(channel, ...args);
+  });
+}
+
+// Throttle position events to ~20 ms (50 Hz) — enough for smooth scrubbing
+let lastPosSend = 0;
+engine.on('position',    (t: number) => {
+  const now = Date.now();
+  if (now - lastPosSend >= 20) { lastPosSend = now; sendToRenderer('audio:position', t); }
+});
+engine.on('levels',      (l: number[]) => sendToRenderer('audio:levels',      l));
+engine.on('inputLevels', (l: number[]) => sendToRenderer('audio:inputLevels', l));
+engine.on('ended',       (t: number)   => sendToRenderer('audio:ended',       t));
+engine.on('error',       (m: string)   => sendToRenderer('audio:error',       m));
+engine.on('unavailable', ()            => sendToRenderer('audio:unavailable'));
+// Forward bus chunks to renderer (timing-critical — no throttle)
+engine.on('busChunk', (busId: string, chunk: Buffer) =>
+  sendToRenderer('audio:busChunk', busId, chunk));
+
+ipcMain.handle('audio:isAvailable',  () => nativeAudioAvailable);
+ipcMain.handle('audio:getDevices',   () => engine.getDevices());
+
+ipcMain.handle('audio:play', async (_e, specs, startTime, outDeviceId, sr) => {
+  await engine.startPlayback(specs, startTime, outDeviceId ?? -1, sr ?? 48000);
+});
+ipcMain.handle('audio:stop',  () => engine.stopPlayback());
+ipcMain.handle('audio:seek',  (_e, t: number) => engine.seek(t));
+ipcMain.handle('audio:setTrackParams', (_e, trackId: string, params: any) =>
+  engine.setTrackParams(trackId, params));
+
+ipcMain.handle('audio:getTakePath', (_e, name: string) => NativeAudioEngine.getTakePath(name));
+
+ipcMain.handle('audio:startRecording', async (_e, filePath, inId, outId, sr, numCh) => {
+  await engine.startRecording(filePath, inId ?? -1, outId ?? -1, sr ?? 48000, numCh ?? 2);
+});
+ipcMain.handle('audio:stopRecording', () => engine.stopRecording());
+
+ipcMain.handle('audio:startMonitoring', async (_e, inId, outId, sr, numCh) => {
+  await engine.startMonitoring(inId ?? -1, outId ?? -1, sr ?? 48000, numCh ?? 2);
+});
+ipcMain.handle('audio:stopMonitoring', () => engine.stopMonitoring());
+
+// ── Audio Bus subscriptions ────────────────────────────────────────────────
+// Track which buses each renderer window has subscribed to so we can clean
+// up automatically if the renderer crashes — DAW engine keeps running.
+const windowBusSubs = new Map<number, Set<string>>();
+
+ipcMain.handle('audio:subscribeBus', (e, busId: string) => {
+  const wcId = e.sender.id;
+  if (!windowBusSubs.has(wcId)) {
+    windowBusSubs.set(wcId, new Set());
+    e.sender.once('destroyed', () => {
+      // Renderer gone — unsubscribe all its buses so the engine can close
+      // streams it no longer needs.  The DAW engine itself keeps running.
+      windowBusSubs.get(wcId)?.forEach(id => engine.unsubscribeBus(id));
+      windowBusSubs.delete(wcId);
+    });
+  }
+  windowBusSubs.get(wcId)!.add(busId);
+  engine.subscribeBus(busId);
+});
+
+ipcMain.handle('audio:unsubscribeBus', (e, busId: string) => {
+  const wcId = e.sender.id;
+  windowBusSubs.get(wcId)?.delete(busId);
+  engine.unsubscribeBus(busId);
+});
+
+// Write an ArrayBuffer to a temp file and return its OS path.
+// Used by the renderer to materialise blob/HTTP audio URLs as local files
+// so the native engine (which runs in main) can read them by path.
+ipcMain.handle('audio:writeTemp', async (_e, name: string, data: ArrayBuffer) => {
+  const dir  = path.join(app.getPath('temp'), 'StudioDESK-audio');
+  const file = path.join(dir, name.replace(/[^a-zA-Z0-9_\-. ]/g, '_'));
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(file, Buffer.from(data));
+  return file;
+});
+
+// ── Email (Gmail SMTP via nodemailer) ────────────────────────────────────────
+
+const emailConfigFile = path.join(app.getPath('userData'), 'email-config.enc');
+
+function loadEmailConfig(): { user: string; pass: string } | null {
+  try {
+    if (!fs.existsSync(emailConfigFile)) return null;
+    const enc = fs.readFileSync(emailConfigFile);
+    const json = safeStorage.decryptString(enc);
+    return JSON.parse(json);
+  } catch { return null; }
+}
+
+ipcMain.handle('email:isConfigured', () => loadEmailConfig() !== null);
+
+ipcMain.handle('email:configure', (_e, user: string, pass: string) => {
+  const enc = safeStorage.encryptString(JSON.stringify({ user, pass }));
+  fs.writeFileSync(emailConfigFile, enc);
+});
+
+ipcMain.handle('email:clearConfig', () => {
+  if (fs.existsSync(emailConfigFile)) fs.unlinkSync(emailConfigFile);
+});
+
+ipcMain.handle('email:send', async (_e, to: string, subject: string, body: string) => {
+  const cfg = loadEmailConfig();
+  if (!cfg) throw new Error('Email not configured. Enter your Gmail credentials in the Admin panel.');
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: cfg.user, pass: cfg.pass },
+  });
+
+  await transporter.sendMail({
+    from: `"StudioDESK" <${cfg.user}>`,
+    to,
+    subject,
+    text: body,
+  });
+});
+
 // ── App lifecycle ───────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
@@ -343,4 +479,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', async () => {
+  await engine.dispose();
 });

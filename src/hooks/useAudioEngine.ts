@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { useDaw } from '../context/DawContext';
-import type { Region, PoolItem } from '../context/DawContext';
+import type { Region, PoolItem, MeterValue } from '../context/DawContext';
 import { generatePeaksStereo, uploadAudioToSupabase, saveToAudioFolder, createWavHeader, floatsToPcm24, extractPeaksFromFloat32 } from '../utils/audioUtils';
 import { loadAudioPrefs } from '../components/daw/AudioMIDIPreferencesDialog';
 
@@ -12,9 +12,12 @@ const pendingRetryBlobs = new Map<string, Blob>();
 
 
 export const useAudioEngine = () => {
-  const { state, dispatch, currentTimeRef, audioCtxRef, recordingStartTimeRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, userRole, masterStreamRef, audioDirHandle, retryUploadRef } = useDaw();
+  const { state, dispatch, currentTimeRef, audioCtxRef, recordingStartTimeRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, userRole, masterStreamRef, audioDirHandle, retryUploadRef, meterValuesRef } = useDaw();
 
   const animFrameRef = useRef<number | null>(null);
+  const trackAnalyserPairsRef = useRef<Record<string, [AnalyserNode, AnalyserNode]>>({});
+  const masterAnalyserPairRef = useRef<[AnalyserNode, AnalyserNode] | null>(null);
+  const meterRafRef = useRef(0);
   const playStartAudioTimeRef = useRef<number>(0);
   const playStartDawTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
@@ -221,6 +224,77 @@ export const useAudioEngine = () => {
     animFrameRef.current = requestAnimationFrame(tick);
   }, [stopAnimLoop, currentTimeRef, dispatch]);
 
+  const startMeterLoop = useCallback(() => {
+    if (meterRafRef.current) return;
+    const FLOOR = -90;
+    const HOLD_MS = 2000;
+    const DECAY_PER_FRAME = 0.4; // dB per frame (~60fps)
+
+    const readPeakDb = (an: AnalyserNode): number => {
+      const buf = new Float32Array(an.fftSize);
+      an.getFloatTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const abs = Math.abs(buf[i]);
+        if (abs > peak) peak = abs;
+      }
+      return peak > 0 ? Math.max(FLOOR, 20 * Math.log10(peak)) : FLOOR;
+    };
+
+    const tick = () => {
+      const now = performance.now();
+      const vals = meterValuesRef.current;
+
+      // Per-track
+      const pairs = trackAnalyserPairsRef.current;
+      for (const trackId of Object.keys(pairs)) {
+        const [anL, anR] = pairs[trackId];
+        const dbL = readPeakDb(anL);
+        const dbR = readPeakDb(anR);
+        const v: MeterValue = vals[trackId] ?? { L: FLOOR, R: FLOOR, peakL: FLOOR, peakR: FLOOR, peakLAt: 0, peakRAt: 0, clipL: false, clipR: false };
+        v.L = dbL;
+        v.R = dbR;
+        if (dbL >= v.peakL) { v.peakL = dbL; v.peakLAt = now + HOLD_MS; }
+        else if (now > v.peakLAt) v.peakL = Math.max(FLOOR, v.peakL - DECAY_PER_FRAME);
+        if (dbR >= v.peakR) { v.peakR = dbR; v.peakRAt = now + HOLD_MS; }
+        else if (now > v.peakRAt) v.peakR = Math.max(FLOOR, v.peakR - DECAY_PER_FRAME);
+        if (dbL >= 0) v.clipL = true;
+        if (dbR >= 0) v.clipR = true;
+        vals[trackId] = v;
+      }
+      // Decay tracks that are stopped (not in pairs anymore)
+      for (const id of Object.keys(vals)) {
+        if (id === 'master' || pairs[id]) continue;
+        const v = vals[id];
+        v.L = FLOOR; v.R = FLOOR;
+        v.peakL = Math.max(FLOOR, v.peakL - DECAY_PER_FRAME);
+        v.peakR = Math.max(FLOOR, v.peakR - DECAY_PER_FRAME);
+      }
+
+      // Master
+      const mp = masterAnalyserPairRef.current;
+      if (mp) {
+        const dbL = readPeakDb(mp[0]);
+        const dbR = readPeakDb(mp[1]);
+        const v: MeterValue = vals['master'] ?? { L: FLOOR, R: FLOOR, peakL: FLOOR, peakR: FLOOR, peakLAt: 0, peakRAt: 0, clipL: false, clipR: false };
+        v.L = dbL; v.R = dbR;
+        if (dbL >= v.peakL) { v.peakL = dbL; v.peakLAt = now + HOLD_MS; }
+        else if (now > v.peakLAt) v.peakL = Math.max(FLOOR, v.peakL - DECAY_PER_FRAME);
+        if (dbR >= v.peakR) { v.peakR = dbR; v.peakRAt = now + HOLD_MS; }
+        else if (now > v.peakRAt) v.peakR = Math.max(FLOOR, v.peakR - DECAY_PER_FRAME);
+        if (dbL >= 0) v.clipL = true;
+        if (dbR >= 0) v.clipR = true;
+        vals['master'] = v;
+      } else {
+        const v = vals['master'];
+        if (v) { v.L = FLOOR; v.R = FLOOR; v.peakL = Math.max(FLOOR, v.peakL - DECAY_PER_FRAME); v.peakR = Math.max(FLOOR, v.peakR - DECAY_PER_FRAME); }
+      }
+
+      meterRafRef.current = requestAnimationFrame(tick);
+    };
+    meterRafRef.current = requestAnimationFrame(tick);
+  }, [meterValuesRef]);
+
   const play = useCallback(async () => {
     try {
     const ctx = getAudioCtx();
@@ -244,6 +318,17 @@ export const useAudioEngine = () => {
     if (masterStreamRef.current) masterAnalyser.connect(masterStreamRef.current);
     masterGainRef.current     = masterGain;
     masterAnalyserRef.current = masterAnalyser;
+
+    // Master L/R meter tap
+    const masterMeterSplitter = ctx.createChannelSplitter(2);
+    const masterMeterL = ctx.createAnalyser();
+    const masterMeterR = ctx.createAnalyser();
+    masterMeterL.fftSize = 1024; masterMeterL.smoothingTimeConstant = 0;
+    masterMeterR.fftSize = 1024; masterMeterR.smoothingTimeConstant = 0;
+    masterAnalyser.connect(masterMeterSplitter);
+    masterMeterSplitter.connect(masterMeterL, 0, 0);
+    masterMeterSplitter.connect(masterMeterR, 1, 0);
+    masterAnalyserPairRef.current = [masterMeterL, masterMeterR];
 
     // Build per-track mix buses synchronously before any awaits
     const hasSolo = state.tracks.some(t => t.isSolo);
@@ -275,6 +360,17 @@ export const useAudioEngine = () => {
       trackAnalysersRef.current[track.id] = analyser;
       trackGainsRef.current[track.id]     = gain;
       trackPannersRef.current[track.id]   = panner;
+
+      // L/R meter tap — splitter fans out from panner without affecting signal path
+      const meterSplitter = ctx.createChannelSplitter(2);
+      const meterAnalyserL = ctx.createAnalyser();
+      const meterAnalyserR = ctx.createAnalyser();
+      meterAnalyserL.fftSize = 1024; meterAnalyserL.smoothingTimeConstant = 0;
+      meterAnalyserR.fftSize = 1024; meterAnalyserR.smoothingTimeConstant = 0;
+      panner.connect(meterSplitter);
+      meterSplitter.connect(meterAnalyserL, 0, 0);
+      meterSplitter.connect(meterAnalyserR, 1, 0);
+      trackAnalyserPairsRef.current[track.id] = [meterAnalyserL, meterAnalyserR];
     }
 
     const playableRegions = state.regions.filter(region =>
@@ -440,10 +536,12 @@ export const useAudioEngine = () => {
       startMetronome(ctx);
     }
 
+    startMeterLoop();
+
   } catch (err) {
     console.error('[AudioEngine] play() error:', err);
   }
-  }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, startMetronome, masterStreamRef]);
+  }, [state, dispatch, currentTimeRef, getAudioCtx, startAnimLoop, startMetronome, masterStreamRef, startMeterLoop]);
   playFnRef.current = play;
 
   const stopSources = useCallback(() => {
@@ -454,6 +552,9 @@ export const useAudioEngine = () => {
     trackPannersRef.current    = {};
     masterGainRef.current      = null;
     masterAnalyserRef.current  = null;
+    trackAnalyserPairsRef.current = {};
+    masterAnalyserPairRef.current = null;
+    // Don't stop the meter RAF — let it decay naturally
   }, [trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef]);
   stopSrcRef.current = stopSources;
 
@@ -1010,6 +1111,14 @@ export const useAudioEngine = () => {
 
   // Register so any component can call retryUpload via context
   retryUploadRef.current = retryUpload;
+
+  // Stop meter RAF on unmount
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(meterRafRef.current);
+      meterRafRef.current = 0;
+    };
+  }, []);
 
   return { play, pause, stop, record, seek, stopRecordingSession, initAudioCtx: getAudioCtx };
 };

@@ -1,12 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import './index.css';
 
 import { supabase } from './lib/supabaseClient';
+import { getMyArtistCode, type ArtistCode } from './lib/artistCodes';
 import { DawProvider } from './context/DawContext';
 import DawWorkspace from './components/daw/DawWorkspace';
 import AuthScreen from './components/auth/AuthScreen';
 import SessionScreen from './components/session/SessionScreen';
 import LandingPage from './components/landing/LandingPage';
+
+// Admin panel loaded lazily — not needed by most users
+const AdminPanel = lazy(() => import('./components/admin/AdminPanel'));
 
 const isElectron = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
 
@@ -27,31 +31,97 @@ function App() {
   const [roomCode, setRoomCode] = useState<string | null>(() =>
     localStorage.getItem('sl_room')
   );
+  const [artistCode, setArtistCode] = useState<ArtistCode | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [passwordResetMode, setPasswordResetMode] = useState(false);
 
-  // On mount: re-validate Supabase session (handles page refresh and app restart)
+  // Re-validate Supabase session on mount + listen for PASSWORD_RECOVERY
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
+        const u = data.session.user;
+        const meta = u.user_metadata ?? {};
+        const isAdminUser = u.app_metadata?.is_admin === true;
+
+        // Derive the canonical role from the session, not from localStorage.
+        // localStorage can be stale (e.g. previous engineer session on same machine).
+        let sessionRole = meta.role as 'artist' | 'engineer' | undefined;
+        if (!sessionRole && isAdminUser) sessionRole = 'engineer';
+
         setSession(data.session);
+        setIsAdmin(isAdminUser);
+
+        if (sessionRole) {
+          setUserRole(sessionRole);
+          localStorage.setItem('sl_role', sessionRole);
+        }
+
+        if (sessionRole === 'artist') {
+          getMyArtistCode(u.id).then(code => {
+            if (code) {
+              setArtistCode(code);
+              setRoomCode(prev => {
+                if (prev) return prev;
+                localStorage.setItem('sl_room', code.code);
+                return code.code;
+              });
+            }
+          });
+        }
       } else {
-        // Token expired — clear persisted state and drop back to auth
         localStorage.removeItem('sl_role');
         localStorage.removeItem('sl_room');
         setUserRole(null);
         setRoomCode(null);
       }
     });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordResetMode(true);
+        setSession(null);
+        setUserRole(null);
+      } else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setUserRole(null);
+        setIsAdmin(false);
+        setRoomCode(null);
+        setArtistCode(null);
+        localStorage.removeItem('sl_role');
+        localStorage.removeItem('sl_room');
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleLogin = (role: 'artist' | 'engineer', activeSession: any) => {
     setUserRole(role);
     setSession(activeSession);
     localStorage.setItem('sl_role', role);
+    setIsAdmin(activeSession.user.app_metadata?.is_admin === true);
+
+    if (role === 'artist') {
+      getMyArtistCode(activeSession.user.id).then(code => {
+        if (code) {
+          setArtistCode(code);
+          // Auto-join with artist code so they go straight to the DAW
+          setRoomCode(code.code);
+          localStorage.setItem('sl_room', code.code);
+        }
+      });
+    }
   };
 
   const handleJoinSession = (code: string) => {
     setRoomCode(code);
     localStorage.setItem('sl_room', code);
+  };
+
+  // Called from SessionScreen when artist claims a new code
+  const handleArtistCodeClaimed = (code: ArtistCode) => {
+    setArtistCode(code);
+    handleJoinSession(code.code);
   };
 
   const handleLaunchWeb = () => {
@@ -74,7 +144,13 @@ function App() {
         <div className="top-bar">
           <div className="top-bar-title">StudioDESK</div>
         </div>
-        <AuthScreen onLogin={handleLogin} />
+        <AuthScreen
+          onLogin={(role, activeSession) => {
+            setPasswordResetMode(false);
+            handleLogin(role, activeSession);
+          }}
+          passwordResetMode={passwordResetMode}
+        />
       </div>
     );
   }
@@ -83,9 +159,30 @@ function App() {
     return (
       <div className="app-container">
         <div className="top-bar">
-          <div className="top-bar-title">StudioDESK — {userRole === 'engineer' ? 'Engineer' : 'Artist'}</div>
+          <div className="top-bar-title">
+            StudioDESK — {userRole === 'engineer' ? 'Engineer' : 'Artist'}
+          </div>
+          {isAdmin && (
+            <button
+              className="top-bar-admin-btn"
+              onClick={() => setShowAdminPanel(true)}
+              title="Admin — Manage Artist Codes"
+            >
+              Admin
+            </button>
+          )}
         </div>
-        <SessionScreen userRole={userRole} onJoin={handleJoinSession} />
+        <SessionScreen
+          userRole={userRole}
+          artistCode={artistCode}
+          onJoin={handleJoinSession}
+          onArtistCodeClaimed={handleArtistCodeClaimed}
+        />
+        {showAdminPanel && (
+          <Suspense fallback={null}>
+            <AdminPanel onClose={() => setShowAdminPanel(false)} />
+          </Suspense>
+        )}
       </div>
     );
   }
@@ -111,7 +208,14 @@ function App() {
           userRole={userRole}
           userId={session.user.id}
           roomCode={roomCode}
+          isAdmin={isAdmin}
+          onOpenAdmin={() => setShowAdminPanel(true)}
         />
+        {showAdminPanel && (
+          <Suspense fallback={null}>
+            <AdminPanel onClose={() => setShowAdminPanel(false)} />
+          </Suspense>
+        )}
       </div>
     </DawProvider>
   );

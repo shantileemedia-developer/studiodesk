@@ -3,146 +3,316 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background-color: #121212;
+  background: #0d0d0d;
   color: #d1d1d1;
-  font-family: 'Inter', sans-serif;
 }
 
 .auth-card {
-  background-color: #1a1b1e;
-  border: 1px solid #2a2b2e;
-  border-radius: 8px;
-  padding: 40px;
+  background: #141418;
+  border: 1px solid #2a2a36;
+  border-radius: 12px;
+  padding: 40px 44px;
   width: 100%;
   max-width: 400px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-}
-
-.auth-header {
-  text-align: center;
-  margin-bottom: 32px;
-}
-
-.auth-header h1 {
-  margin: 16px 0 8px;
-  font-size: 24px;
-  color: #fff;
-  font-weight: 600;
-}
-
-.auth-header p {
-  margin: 0;
-  color: #808080;
-  font-size: 14px;
-}
-
-.role-selector {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 32px;
-}
-
-.role-option {
-  flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Brand ── */
+
+.auth-brand {
+  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 16px;
-  background-color: #212225;
-  border: 2px solid #2a2b2e;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: #808080;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.3px;
+  margin-bottom: 8px;
 }
 
-.role-option:hover {
-  background-color: #2a2b2e;
+.auth-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 4px;
 }
 
-.role-option.active {
-  border-color: #00ffcc;
-  background-color: rgba(0, 255, 204, 0.05);
+.auth-sub {
+  font-size: 13px;
+  color: #555;
+  margin: 0 0 12px;
+}
+
+/* ── Role pill (signup form step) ── */
+
+.auth-role-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: rgba(0, 255, 204, 0.08);
+  border: 1px solid rgba(0, 255, 204, 0.2);
   color: #00ffcc;
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+  margin-bottom: 4px;
 }
+
+/* ── Form ── */
 
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
+  margin-top: 8px;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .form-group label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #a0a0a0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
 }
 
 .form-group input {
-  background-color: #212225;
-  border: 1px solid #333;
-  color: #fff;
-  padding: 12px;
-  border-radius: 4px;
+  background: #0d0d14;
+  border: 1px solid #2a2a36;
+  color: #e2e8f0;
+  padding: 12px 14px;
+  border-radius: 7px;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.15s;
 }
 
-.form-group input:focus {
-  border-color: #00ffcc;
+.form-group input::placeholder { color: #333; }
+.form-group input:focus { border-color: #00ffcc; }
+
+.password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
-.login-btn {
-  background-color: #00ffcc;
+.password-wrap input {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.password-eye {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  z-index: 1;
+}
+.password-eye:hover { color: #00ffcc; }
+
+/* ── Primary button ── */
+
+.auth-submit-btn {
+  width: 100%;
+  background: #00ffcc;
   color: #000;
   border: none;
-  padding: 14px;
-  border-radius: 4px;
+  padding: 13px;
+  border-radius: 7px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background 0.15s;
+  margin-top: 4px;
+  letter-spacing: 0.2px;
+}
+.auth-submit-btn:hover:not(:disabled) { background: #00e6b8; }
+.auth-submit-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Footer / links ── */
+
+.auth-footer {
+  font-size: 13px;
+  color: #555;
+  text-align: center;
   margin-top: 8px;
 }
 
-.login-btn:hover:not(:disabled) {
-  background-color: #00cc66;
-}
-.login-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.toggle-auth-mode-btn {
-  background: transparent;
+.auth-link {
+  background: none;
   border: none;
   color: #00ffcc;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
-  margin-top: 4px;
+  padding: 0;
+  text-decoration: none;
 }
+.auth-link:hover { text-decoration: underline; }
 
-.toggle-auth-mode-btn:hover {
-  text-decoration: underline;
+.auth-link.small {
+  font-size: 11px;
+  color: #555;
+  margin-left: 4px;
 }
+.auth-link.small:hover { color: #999; }
+
+/* ── Error ── */
 
 .auth-error {
-  background-color: rgba(255, 77, 77, 0.1);
-  border: 1px solid #ff4d4d;
-  color: #ff4d4d;
-  padding: 12px;
-  border-radius: 4px;
+  background: rgba(255, 77, 77, 0.08);
+  border: 1px solid rgba(255, 77, 77, 0.3);
+  color: #ff6b6b;
+  padding: 10px 14px;
+  border-radius: 7px;
   font-size: 12px;
-  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+/* ── Role cards (signup step 1) ── */
+
+.role-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.role-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 18px 20px;
+  background: #0d0d14;
+  border: 2px solid #2a2a36;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  color: #666;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  width: 100%;
+}
+
+.role-card strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: #c0c0c0;
+}
+
+.role-card span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #555;
+}
+
+.role-card:hover {
+  border-color: #3a3a50;
+  background: #12121a;
+}
+
+.role-card.active {
+  border-color: #00ffcc;
+  background: rgba(0, 255, 204, 0.04);
+  color: #00ffcc;
+}
+
+.role-card.active strong { color: #00ffcc; }
+.role-card.active span  { color: #5a9e8f; }
+
+/* ── Auth screen copyright / support footer ── */
+
+.auth-support-footer {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: #333;
+  line-height: 1.7;
+}
+
+.auth-support-footer a {
+  color: #444;
+  text-decoration: none;
+}
+.auth-support-footer a:hover { color: #00ffcc; }
+
+/* ── Info / success message ── */
+
+.auth-info {
+  background: rgba(0, 255, 204, 0.07);
+  border: 1px solid rgba(0, 255, 204, 0.25);
+  color: #00e6b8;
+  padding: 10px 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ── Recovery links row (below password on sign-in) ── */
+
+.auth-recovery-links {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: -4px;
+}
+
+/* ── Email confirmation screen ── */
+
+.auth-card-center {
+  align-items: center;
+  text-align: center;
+}
+
+.auth-confirm-icon {
+  font-size: 40px;
+  margin: 4px 0;
+}
+
+.auth-body-text {
+  font-size: 14px;
+  color: #666;
+  line-height: 1.6;
+  max-width: 300px;
+  margin: 0 auto;
+}
+
+/* ── Invite-only notice on signup form ── */
+
+.auth-invite-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #555;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #1e1e28;
+  border-radius: 7px;
+  padding: 8px 12px;
+  line-height: 1.5;
+}
+
+/* ── Artist code input (Forgot Email screen) ── */
+
+.code-input-field {
+  font-family: 'Consolas', 'JetBrains Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #00ffcc;
   text-align: center;
 }

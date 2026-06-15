@@ -78,141 +78,148 @@ const panLcdRight = (pan: number): string => {
 };
 
 /* ── Single-column VU meter ──────────────────────────────────────────────────── */
+const METER_FLOOR = -90;
+
+const dbToYMeter = (db: number, h: number): number => {
+  // Non-linear scale: top 50% = 0 to -18 dBFS, bottom 50% = -18 to floor
+  if (db >= 0)    return 0;
+  if (db >= -18)  return h * 0.5 * (db / -18);
+  return h * 0.5 + h * 0.5 * ((db + 18) / (METER_FLOOR + 18));
+};
+
+const meterColor = (db: number): string => {
+  if (db >= -3)  return '#ff2200';
+  if (db >= -6)  return '#ff7700';
+  if (db >= -18) return '#cccc00';
+  return '#22cc44';
+};
+
+const meterColorDim = (db: number): string => {
+  if (db >= -3)  return '#220500';
+  if (db >= -6)  return '#1a0800';
+  if (db >= -18) return '#1a1a00';
+  return '#051205';
+};
+
 interface SingleMeterProps {
-  analyserRef?: React.MutableRefObject<Record<string, AnalyserNode>>;
-  trackId?: string;
-  directAnalyser?: React.MutableRefObject<AnalyserNode | null>;
+  trackId?: string;  // track ID or 'master'
   channel: 'L' | 'R';
 }
 
-const SingleMeter: React.FC<SingleMeterProps> = ({ analyserRef, trackId, directAnalyser, channel }) => {
+const SingleMeter: React.FC<SingleMeterProps> = ({ trackId, channel }) => {
+  const { meterValuesRef } = useDaw();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stateRef  = useRef({ display: -60, peakHold: -60, peakAt: 0 });
+  const displayRef = useRef(-90);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
+    const ctx2d = canvas.getContext('2d')!;
     let raf = 0;
 
     const draw = () => {
       const W = canvas.width, H = canvas.height;
-      const s = stateRef.current;
-      const an = directAnalyser ? directAnalyser.current : (analyserRef?.current[trackId ?? ''] ?? null);
-      let rawDb = -60;
-      if (an) {
-        const buf = new Float32Array(an.fftSize);
-        an.getFloatTimeDomainData(buf);
-        let sq = 0;
-        for (let i = 0; i < buf.length; i++) sq += buf[i] * buf[i];
-        const rms = Math.sqrt(sq / buf.length);
-        rawDb = rms > 0.00001 ? Math.max(-60, 20 * Math.log10(rms)) : -60;
-      }
-      if (channel === 'R') rawDb -= Math.random() * 0.6;
+      const mv = trackId ? meterValuesRef.current[trackId] : null;
+      const rawDb = mv ? (channel === 'L' ? mv.L : mv.R) : -90;
+      const peakDb = mv ? (channel === 'L' ? mv.peakL : mv.peakR) : -90;
 
-      s.display = rawDb > s.display
-        ? 0.55 * s.display + 0.45 * rawDb
-        : 0.975 * s.display + 0.025 * rawDb;
+      // Smooth display (fast attack, slow decay)
+      displayRef.current = rawDb > displayRef.current
+        ? 0.5 * displayRef.current + 0.5 * rawDb
+        : 0.97 * displayRef.current + 0.03 * rawDb;
+      const db = displayRef.current;
 
-      const now = performance.now();
-      if (s.display > s.peakHold) { s.peakHold = s.display; s.peakAt = now + 1800; }
-      else if (now > s.peakAt) s.peakHold = Math.max(-60, s.peakHold - 0.15);
+      ctx2d.fillStyle = '#080a10';
+      ctx2d.fillRect(0, 0, W, H);
 
-      ctx.fillStyle = '#080a10';
-      ctx.fillRect(0, 0, W, H);
+      const SEGS = 40;
+      const sh = H / SEGS;
+      const gap = 0.8;
 
-      const segs = 40, sh = H / segs, gap = 0.8;
-      for (let i = 0; i < segs; i++) {
-        const y   = H - (i + 1) * sh;
-        const db  = yToDb(y + sh / 2, H);
-        const lit = db <= s.display;
-        let color: string;
-        if (lit) {
-          if (db >= -3)        color = '#ff2200';  // near/above 0 dBFS → red
-          else if (db >= -9)   color = '#cc9900';  // -9 to -3 dBFS → amber
-          else if (db >= -18)  color = '#88bb00';  // -18 to -9 dBFS → yellow-green
-          else                 color = '#00aa00';  // below -18 dBFS → green
-        } else {
-          color = '#071209'; // all unlit segments: uniform dark green
-        }
-        ctx.fillStyle = color;
-        ctx.fillRect(1, y + gap, W - 2, sh - gap);
+      for (let i = 0; i < SEGS; i++) {
+        const y = H - (i + 1) * sh;
+        // Map segment centre to dB
+        const segDb = METER_FLOOR + ((i + 0.5) / SEGS) * (0 - METER_FLOOR);
+        const lit = segDb <= db;
+        ctx2d.fillStyle = lit ? meterColor(segDb) : meterColorDim(segDb);
+        ctx2d.fillRect(1, y + gap, W - 2, sh - gap);
       }
 
-      if (s.peakHold > -58) {
-        const py   = dbToY(s.peakHold, H);
-        const fade = Math.max(0, Math.min(1, (s.peakAt - now) / 400));
-        ctx.globalAlpha = fade;
-        ctx.fillStyle = s.peakHold > 0 ? '#ff3b30' : s.peakHold > -6 ? '#ffd600' : '#00e5a0';
-        ctx.fillRect(0, py, W, 2);
-        ctx.globalAlpha = 1;
+      // Peak hold line
+      if (peakDb > METER_FLOOR + 2) {
+        const py = H - (peakDb - METER_FLOOR) / (0 - METER_FLOOR) * H;
+        ctx2d.fillStyle = meterColor(peakDb);
+        ctx2d.globalAlpha = 0.9;
+        ctx2d.fillRect(0, Math.max(0, py - 1), W, 2);
+        ctx2d.globalAlpha = 1;
       }
 
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [analyserRef, trackId, channel]);
+  }, [trackId, channel, meterValuesRef]);
 
   return <canvas ref={canvasRef} width={9} height={290} className="mixer-vu-canvas" />;
 };
 
 /* ── Peak dB display (RAF-driven, no React state) ────────────────────────────── */
-interface PeakDisplayProps {
-  analyserRef?: React.MutableRefObject<Record<string, AnalyserNode>>;
-  trackId?: string;
-  directAnalyser?: React.MutableRefObject<AnalyserNode | null>;
-}
-
-const PeakDisplay: React.FC<PeakDisplayProps> = ({ analyserRef, trackId, directAnalyser }) => {
+const PeakDisplay: React.FC<{ trackId?: string }> = ({ trackId }) => {
+  const { meterValuesRef } = useDaw();
   const lRef = useRef<HTMLSpanElement>(null);
   const rRef = useRef<HTMLSpanElement>(null);
-  const peakL = useRef(-60), peakR = useRef(-60);
-  const peakLat = useRef(0), peakRat = useRef(0);
 
   useEffect(() => {
     let raf = 0;
     const tick = () => {
-      const an = directAnalyser ? directAnalyser.current : (analyserRef?.current[trackId ?? ''] ?? null);
-      const now = performance.now();
-      let db = -60;
-      if (an) {
-        const buf = new Float32Array(an.fftSize);
-        an.getFloatTimeDomainData(buf);
-        let sq = 0;
-        for (let i = 0; i < buf.length; i++) sq += buf[i] * buf[i];
-        const rms = Math.sqrt(sq / buf.length);
-        db = rms > 0.00001 ? Math.max(-60, 20 * Math.log10(rms)) : -60;
-      }
-      const dbL = db, dbR = db - Math.random() * 0.8;
-
-      if (dbL > peakL.current) { peakL.current = dbL; peakLat.current = now + 2000; }
-      else if (now > peakLat.current) peakL.current = Math.max(-60, peakL.current - 0.15);
-      if (dbR > peakR.current) { peakR.current = dbR; peakRat.current = now + 2000; }
-      else if (now > peakRat.current) peakR.current = Math.max(-60, peakR.current - 0.15);
-
-      const fmtPeak = (v: number) => v <= -60 ? '-∞' : (v > 0 ? '+' : '') + v.toFixed(1);
-      const colorFor = (v: number) => v >= 0 ? '#ff3300' : v > -3 ? '#ddcc00' : '#22cc22';
-
-      if (lRef.current) {
-        lRef.current.textContent  = fmtPeak(peakL.current);
-        lRef.current.style.color  = colorFor(peakL.current);
-      }
-      if (rRef.current) {
-        rRef.current.textContent  = fmtPeak(peakR.current);
-        rRef.current.style.color  = colorFor(peakR.current);
-      }
+      const mv = trackId ? meterValuesRef.current[trackId] : null;
+      const dbL = mv?.peakL ?? -90;
+      const dbR = mv?.peakR ?? -90;
+      const fmt = (v: number) => v <= -89 ? '-∞' : (v >= 0 ? '+' : '') + v.toFixed(1);
+      const col = (v: number) => v >= -3 ? '#ff2200' : v >= -6 ? '#ff7700' : v >= -18 ? '#cccc00' : '#22cc44';
+      if (lRef.current) { lRef.current.textContent = fmt(dbL); lRef.current.style.color = col(dbL); }
+      if (rRef.current) { rRef.current.textContent = fmt(dbR); rRef.current.style.color = col(dbR); }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [analyserRef, trackId, directAnalyser]);
+  }, [trackId, meterValuesRef]);
 
   return (
     <div className="mch-peak-box">
       <span className="mch-pv" ref={lRef}>-∞</span>
       <span className="mch-pv" ref={rRef}>-∞</span>
     </div>
+  );
+};
+
+/* ── Clip Indicator ──────────────────────────────────────────────────────────── */
+const ClipIndicator: React.FC<{ trackId?: string }> = ({ trackId }) => {
+  const { meterValuesRef, clearMeterClip } = useDaw();
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const mv = trackId ? meterValuesRef.current[trackId] : null;
+      const clip = mv ? (mv.clipL || mv.clipR) : false;
+      if (ref.current) {
+        ref.current.style.background = clip ? '#ff2200' : '#1a0500';
+        ref.current.style.boxShadow = clip ? '0 0 6px #ff2200' : 'none';
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [trackId, meterValuesRef]);
+
+  return (
+    <div
+      ref={ref}
+      className="mch-clip-led"
+      title="Clip — click to reset"
+      onClick={() => trackId && clearMeterClip(trackId)}
+    />
   );
 };
 
@@ -355,12 +362,11 @@ const PanKnob: React.FC<{ pan: number; onChange: (v: number) => void }> = ({ pan
 /* ── Channel Strip ───────────────────────────────────────────────────────────── */
 interface ChannelStripProps {
   track: Track;
-  trackAnalysersRef: React.MutableRefObject<Record<string, AnalyserNode>>;
   isSelected: boolean;
   onClick: () => void;
 }
 
-const ChannelStrip: React.FC<ChannelStripProps> = ({ track, trackAnalysersRef, isSelected, onClick }) => {
+const ChannelStrip: React.FC<ChannelStripProps> = ({ track, isSelected, onClick }) => {
   const { dispatch } = useDaw();
 
   const setVolume = (v: number) =>
@@ -442,13 +448,13 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({ track, trackAnalysersRef, i
           ))}
         </div>
         <div className="mch-meter-col">
-          <SingleMeter analyserRef={trackAnalysersRef} trackId={track.id} channel="L" />
+          <SingleMeter trackId={track.id} channel="L" />
         </div>
         <div className="mch-fader-col">
           <VerticalFader value={isFinite(track.volume) ? track.volume : 0.8} onChange={setVolume} />
         </div>
         <div className="mch-meter-col">
-          <SingleMeter analyserRef={trackAnalysersRef} trackId={track.id} channel="R" />
+          <SingleMeter trackId={track.id} channel="R" />
         </div>
         <div className="mch-meter-scale">
           {DB_SCALE_MARKS.map(m => (
@@ -459,8 +465,11 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({ track, trackAnalysersRef, i
         </div>
       </div>
 
+      {/* Clip indicator */}
+      <ClipIndicator trackId={track.id} />
+
       {/* Peak readout */}
-      <PeakDisplay analyserRef={trackAnalysersRef} trackId={track.id} />
+      <PeakDisplay trackId={track.id} />
 
       {/* Routing / din row */}
       <div className="mch-routing-row">
@@ -486,10 +495,9 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({ track, trackAnalysersRef, i
 const MasterStrip: React.FC<{
   vol: number; pan: number;
   onVol: (v: number) => void; onPan: (v: number) => void;
-  masterAnalyserRef: React.MutableRefObject<AnalyserNode | null>;
   color: string;
   onColorChange: (c: string) => void;
-}> = ({ vol, pan, onVol, onPan, masterAnalyserRef, color, onColorChange }) => {
+}> = ({ vol, pan, onVol, onPan, color, onColorChange }) => {
   const [showPicker, setShowPicker] = useState(false);
   const [pickerPos, setPickerPos] = useState({ x: 0, y: 0 });
   const swatchRef   = useRef<HTMLDivElement>(null);
@@ -538,12 +546,12 @@ const MasterStrip: React.FC<{
       </div>
 
       <div className="mch-btn-row">
-        <button className="mch-btn mch-input-btn" style={{ opacity: 0.35 }}>I</button>
-        <button className="mch-btn mch-rec-btn" style={{ opacity: 0.35 }}><span className="mch-rec-dot" /></button>
+        <button className="mch-btn mch-input-btn">I</button>
+        <button className="mch-btn mch-rec-btn"><span className="mch-rec-dot" /></button>
       </div>
       <div className="mch-btn-row">
-        <button className="mch-btn mch-solo-btn" style={{ opacity: 0.35 }}>S</button>
-        <button className="mch-btn mch-mute-btn" style={{ opacity: 0.35 }}>M</button>
+        <button className="mch-btn mch-solo-btn">S</button>
+        <button className="mch-btn mch-mute-btn">M</button>
       </div>
 
       <div className="mch-fader-area">
@@ -555,13 +563,13 @@ const MasterStrip: React.FC<{
           ))}
         </div>
         <div className="mch-meter-col">
-          <SingleMeter directAnalyser={masterAnalyserRef} channel="L" />
+          <SingleMeter trackId="master" channel="L" />
         </div>
         <div className="mch-fader-col">
           <VerticalFader value={isFinite(vol) ? vol : 0.8} onChange={onVol} isMaster capColor={color} />
         </div>
         <div className="mch-meter-col">
-          <SingleMeter directAnalyser={masterAnalyserRef} channel="R" />
+          <SingleMeter trackId="master" channel="R" />
         </div>
         <div className="mch-meter-scale">
           {DB_SCALE_MARKS.map(m => (
@@ -572,7 +580,9 @@ const MasterStrip: React.FC<{
         </div>
       </div>
 
-      <PeakDisplay directAnalyser={masterAnalyserRef} />
+      <ClipIndicator trackId="master" />
+
+      <PeakDisplay trackId="master" />
 
       <div className="mch-routing-row">
         <button className="mch-route-arrow">◄</button>
@@ -621,10 +631,10 @@ const MasterStrip: React.FC<{
 
 /* ── Mixer Panel ─────────────────────────────────────────────────────────────── */
 const MixerPanel: React.FC = () => {
-  const { state, dispatch, trackAnalysersRef, masterGainRef, masterAnalyserRef } = useDaw();
+  const { state, dispatch, masterGainRef } = useDaw();
   const [masterVol,   setMasterVol]   = useState(0.8);
   const [masterPan,   setMasterPan]   = useState(0);
-  const [masterColor, setMasterColor] = useState('#7072a0');
+  const [masterColor, setMasterColor] = useState('#994422');
 
   // Sync master fader → master gain node whenever it changes
   useEffect(() => {
@@ -648,7 +658,6 @@ const MixerPanel: React.FC = () => {
             <ChannelStrip
               key={track.id}
               track={track}
-              trackAnalysersRef={trackAnalysersRef}
               isSelected={state.selectedTrackId === track.id}
               onClick={() => dispatch({ type: 'SELECT_TRACK', payload: track.id })}
             />
@@ -660,7 +669,6 @@ const MixerPanel: React.FC = () => {
         <MasterStrip
           vol={masterVol} pan={masterPan}
           onVol={setMasterVol} onPan={setMasterPan}
-          masterAnalyserRef={masterAnalyserRef}
           color={masterColor}
           onColorChange={setMasterColor}
         />

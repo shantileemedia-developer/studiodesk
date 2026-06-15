@@ -12,19 +12,24 @@ export interface AudioPrefs {
   inputChannel2: string;
   outputChannel1: string;
   outputChannel2: string;
+  // Native engine device IDs (integers from naudiodon; -1 = system default)
+  nativeInputDeviceId:  number;
+  nativeOutputDeviceId: number;
 }
 
 const PREFS_KEY = 'studiodesk_audio_prefs';
 
 export const DEFAULT_AUDIO_PREFS: AudioPrefs = {
-  inputDeviceId:  'default',
-  outputDeviceId: 'default',
-  sampleRate:     48000,
-  bufferSize:     256,
-  inputChannel1:  'Input 1',
-  inputChannel2:  'Input 2',
-  outputChannel1: 'Output 1',
-  outputChannel2: 'Output 2',
+  inputDeviceId:        'default',
+  outputDeviceId:       'default',
+  sampleRate:           48000,
+  bufferSize:           256,
+  inputChannel1:        'Input 1',
+  inputChannel2:        'Input 2',
+  outputChannel1:       'Output 1',
+  outputChannel2:       'Output 2',
+  nativeInputDeviceId:  -1,
+  nativeOutputDeviceId: -1,
 };
 
 export function loadAudioPrefs(): AudioPrefs {
@@ -51,6 +56,7 @@ const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose
 
   const [inputDevices,  setInputDevices]  = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [nativeDevices, setNativeDevices] = useState<import('../../types/audioEngine').AudioDevice[]>([]);
 
   const [engineRunning, setEngineRunning] = useState(false);
   const [latency,       setLatency]       = useState<number | null>(null);
@@ -69,6 +75,8 @@ const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose
       setOutputDevices(devices.filter(d => d.kind === 'audiooutput'));
     };
     enumerate();
+    // Native devices (naudiodon — only in Electron with native engine compiled)
+    window.audioEngine?.getDevices().then(setNativeDevices).catch(() => {});
 
     navigator.mediaDevices.addEventListener?.('devicechange', enumerate);
     return () => navigator.mediaDevices.removeEventListener?.('devicechange', enumerate);
@@ -279,6 +287,44 @@ const AudioMIDIPreferencesDialog: React.FC<{ onClose: () => void }> = ({ onClose
                   <span className="apd-unit">samples</span>
                 </div>
               </div>
+
+              {/* Native ASIO/WASAPI/CoreAudio device selection */}
+              {nativeDevices.length > 0 && (<>
+                <div className="apd-separator" />
+                <div className="apd-row" style={{ marginBottom: 2 }}>
+                  <label style={{ fontWeight: 600 }}>Native Engine (ASIO/WASAPI/CoreAudio)</label>
+                </div>
+                <div className="apd-row">
+                  <label>Native Input:</label>
+                  <select
+                    className="apd-select apd-select-wide"
+                    value={prefs.nativeInputDeviceId}
+                    onChange={e => set('nativeInputDeviceId', Number(e.target.value))}
+                  >
+                    <option value={-1}>Default Input</option>
+                    {nativeDevices.filter(d => d.maxInputChannels > 0).map(d => (
+                      <option key={d.id} value={d.id}>
+                        [{d.hostApi}] {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="apd-row">
+                  <label>Native Output:</label>
+                  <select
+                    className="apd-select apd-select-wide"
+                    value={prefs.nativeOutputDeviceId}
+                    onChange={e => set('nativeOutputDeviceId', Number(e.target.value))}
+                  >
+                    <option value={-1}>Default Output</option>
+                    {nativeDevices.filter(d => d.maxOutputChannels > 0).map(d => (
+                      <option key={d.id} value={d.id}>
+                        [{d.hostApi}] {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>)}
 
               <div className="apd-separator" />
 

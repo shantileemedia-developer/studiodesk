@@ -26,9 +26,11 @@ interface DawWorkspaceProps {
   userRole: 'artist' | 'engineer';
   userId: string;
   roomCode: string;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
 }
 
-const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode }) => {
+const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode, isAdmin, onOpenAdmin }) => {
   const [showInspector, setShowInspector] = useState(true);
   const [showMixer, setShowMixer] = useState(true);
   const [showPreferences, setShowPreferences] = useState(false);
@@ -112,6 +114,41 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
       if (artistCursorTimerRef.current) clearTimeout(artistCursorTimerRef.current);
     }
   }, []);
+
+  // Always-current snapshot of panelSizes for use in closure callbacks
+  const panelSizesRef = useRef(state.panelSizes);
+  useEffect(() => { panelSizesRef.current = state.panelSizes; }, [state.panelSizes]);
+
+  const startResize = useCallback((
+    e: React.PointerEvent,
+    panel: 'inspector' | 'tracklist' | 'mixer',
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const { inspectorWidth, trackListWidth, mixerHeight } = panelSizesRef.current;
+
+    const onMove = (ev: PointerEvent) => {
+      if (panel === 'mixer') {
+        const h = Math.max(180, Math.min(480, mixerHeight + (startY - ev.clientY)));
+        dispatch({ type: 'SET_PANEL_SIZE', payload: { mixerHeight: h } });
+      } else if (panel === 'inspector') {
+        const w = Math.max(160, Math.min(400, inspectorWidth + (ev.clientX - startX)));
+        dispatch({ type: 'SET_PANEL_SIZE', payload: { inspectorWidth: w } });
+      } else {
+        const w = Math.max(160, Math.min(320, trackListWidth + (ev.clientX - startX)));
+        dispatch({ type: 'SET_PANEL_SIZE', payload: { trackListWidth: w } });
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [dispatch]);
 
   // Remembers where playback started so spacebar stop can return there (Cubase behaviour)
   const prePlayPosRef = useRef<number>(0);
@@ -283,17 +320,31 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
   }, [state, dispatch, handlePlay, handleStop, handleReturnToZero, handleRecord, setShowLyrics]);
 
   return (
-    <div className="daw-workspace" style={{ position: 'relative' }}>
+    <div
+      className={`daw-workspace density-${state.uiDensity}`}
+      style={{
+        position: 'relative',
+        ...({
+          '--inspector-w': showInspector ? `${state.panelSizes.inspectorWidth}px` : '0px',
+          '--tracklist-w': `${state.panelSizes.trackListWidth}px`,
+          '--mixer-h': showMixer ? `${state.panelSizes.mixerHeight}px` : '0px',
+        } as React.CSSProperties),
+      }}
+    >
       {/* Hidden audio output for received live stream (Engineer side) */}
       {userRole === 'engineer' && <audio ref={liveAudioRef} autoPlay style={{ display: 'none' }} />}
       <MenuBar
         onOpenAudioPrefs={() => setShowAudioPrefs(true)}
-        onCloseProject={() => {
+        onCloseProject={async () => {
+          await supabase.auth.signOut();
           localStorage.removeItem('sl_room');
           localStorage.removeItem('sl_showApp');
+          localStorage.removeItem('sl_role');
           window.location.reload();
         }}
         onToggleLyrics={() => setShowLyrics(v => !v)}
+        isAdmin={isAdmin}
+        onOpenAdmin={onOpenAdmin}
       />
       {showPreferences && <PreferencesDialog onClose={() => setShowPreferences(false)} />}
       {showAudioPrefs && <AudioMIDIPreferencesDialog onClose={() => setShowAudioPrefs(false)} />}
@@ -307,14 +358,37 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode 
       )}
 
       <div className="daw-main-area">
-        {showInspector && <InspectorPanel />}
+        {showInspector && (
+          <>
+            <InspectorPanel />
+            <div
+              className="panel-resize-handle panel-resize-h"
+              onPointerDown={e => startResize(e, 'inspector')}
+              title="Drag to resize inspector"
+            />
+          </>
+        )}
 
         <div className="daw-arrange-section">
           <div className="daw-arrange-container">
             <TrackList />
+            <div
+              className="panel-resize-handle panel-resize-h"
+              onPointerDown={e => startResize(e, 'tracklist')}
+              title="Drag to resize track list"
+            />
             <ArrangeWindow onSeek={handleSeek} />
           </div>
-          {showMixer && <MixerPanel />}
+          {showMixer && (
+            <>
+              <div
+                className="panel-resize-handle panel-resize-v"
+                onPointerDown={e => startResize(e, 'mixer')}
+                title="Drag to resize mixer"
+              />
+              <MixerPanel />
+            </>
+          )}
         </div>
 
         <MediaPoolPanel />

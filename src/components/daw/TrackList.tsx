@@ -9,8 +9,78 @@ import './TrackList.css';
 
 interface CtxState { x: number; y: number; trackId: string | null }
 
+/* ── Mini meter canvas shown in each track header ────────────────────────────── */
+const TRACK_METER_FLOOR = -90;
+
+const TrackMiniMeter: React.FC<{ trackId: string }> = ({ trackId }) => {
+  const { meterValuesRef } = useDaw();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const displayL = useRef(-90), displayR = useRef(-90);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx2d = canvas.getContext('2d')!;
+    let raf = 0;
+
+    const meterCol = (db: number) => {
+      if (db >= -3)  return '#ff2200';
+      if (db >= -6)  return '#ff7700';
+      if (db >= -18) return '#cccc00';
+      return '#22cc44';
+    };
+
+    const draw = () => {
+      const W = canvas.width, H = canvas.height;
+      const mv = meterValuesRef.current[trackId];
+      const rawL = mv?.L ?? -90;
+      const rawR = mv?.R ?? -90;
+
+      // Smooth
+      displayL.current = rawL > displayL.current ? 0.5 * displayL.current + 0.5 * rawL : 0.96 * displayL.current + 0.04 * rawL;
+      displayR.current = rawR > displayR.current ? 0.5 * displayR.current + 0.5 * rawR : 0.96 * displayR.current + 0.04 * rawR;
+
+      const dbToW = (db: number) => Math.max(0, (db - TRACK_METER_FLOOR) / (0 - TRACK_METER_FLOOR) * W);
+
+      ctx2d.fillStyle = '#0a0c10';
+      ctx2d.fillRect(0, 0, W, H);
+
+      const halfH = H / 2;
+      const wL = dbToW(displayL.current);
+      const wR = dbToW(displayR.current);
+
+      // L bar
+      ctx2d.fillStyle = meterCol(displayL.current);
+      ctx2d.fillRect(0, 0, wL, halfH - 1);
+      // R bar
+      ctx2d.fillStyle = meterCol(displayR.current);
+      ctx2d.fillRect(0, halfH + 1, wR, halfH - 1);
+
+      // Peak hold
+      const peakL = mv?.peakL ?? -90;
+      const peakR = mv?.peakR ?? -90;
+      if (peakL > TRACK_METER_FLOOR + 2) {
+        const px = dbToW(peakL);
+        ctx2d.fillStyle = meterCol(peakL);
+        ctx2d.fillRect(Math.min(W - 1, px), 0, 2, halfH - 1);
+      }
+      if (peakR > TRACK_METER_FLOOR + 2) {
+        const px = dbToW(peakR);
+        ctx2d.fillStyle = meterCol(peakR);
+        ctx2d.fillRect(Math.min(W - 1, px), halfH + 1, 2, halfH - 1);
+      }
+
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [trackId, meterValuesRef]);
+
+  return <canvas ref={canvasRef} width={120} height={10} className="track-mini-meter" />;
+};
+
 const TrackList = () => {
-  const { state, dispatch, trackAnalysersRef, audioDirHandle, currentTimeRef } = useDaw();
+  const { state, dispatch, audioDirHandle, currentTimeRef } = useDaw();
   const { tracks } = state;
 
   const selectedId = state.selectedTrackId;
@@ -191,59 +261,6 @@ const TrackList = () => {
     setDropTargetId(null);
   };
 
-  /* ── live meters ─────────────────────────────────────────── */
-  const requestRef = useRef<number>(0);
-
-  useEffect(() => {
-    const updateMeters = () => {
-      if (!state.transport.isPlaying) {
-        state.tracks.forEach(track => {
-          const el = document.getElementById(`vol-slider-${track.id}`);
-          if (el) {
-            // Gradually decay meter to 0
-            const current = parseFloat(el.style.getPropertyValue('--meter-level') || '0');
-            if (current > 0) {
-              el.style.setProperty('--meter-level', `${Math.max(0, current - 5)}%`);
-            }
-          }
-        });
-        requestRef.current = requestAnimationFrame(updateMeters);
-        return;
-      }
-
-      state.tracks.forEach(track => {
-        const analyser = trackAnalysersRef.current[track.id];
-        let level = 0;
-        if (analyser) {
-          const data = new Uint8Array(analyser.fftSize);
-          analyser.getByteTimeDomainData(data);
-          let sum = 0;
-          for (let i = 0; i < data.length; i++) {
-            const v = (data[i] / 128) - 1;
-            sum += v * v;
-          }
-          const rms = Math.sqrt(sum / data.length);
-          // Scale RMS to 0-100% range, making it visible
-          level = Math.min(1, rms * 5) * 100;
-        }
-        
-        const el = document.getElementById(`vol-slider-${track.id}`);
-        if (el) {
-          // Smooth the meter visually by not letting it drop instantly
-          const current = parseFloat(el.style.getPropertyValue('--meter-level') || '0');
-          const next = level > current ? level : current - 5;
-          el.style.setProperty('--meter-level', `${Math.max(0, next)}%`);
-        }
-      });
-      requestRef.current = requestAnimationFrame(updateMeters);
-    };
-
-    requestRef.current = requestAnimationFrame(updateMeters);
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
-  }, [state.tracks, state.transport.isPlaying, trackAnalysersRef]);
-
   /* ── render ──────────────────────────────────────────────── */
   return (
     <>
@@ -359,7 +376,6 @@ const TrackList = () => {
 
                   <div className="track-volume-row" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
                     <input
-                      id={`vol-slider-${track.id}`}
                       type="range"
                       min="0"
                       max="1.5"
@@ -369,6 +385,7 @@ const TrackList = () => {
                       className="track-volume-slider"
                       title={`Volume: ${Math.round(track.volume * 100)}%`}
                     />
+                    <TrackMiniMeter trackId={track.id} />
                   </div>
 
                   {/* Version dropdown — stereo tracks only */}

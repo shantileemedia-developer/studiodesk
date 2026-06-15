@@ -217,12 +217,15 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
 
       <footer className="landing-footer">
         <div className="footer-content">
-          <div className="footer-logo">StudioDESK</div>
-          <div className="footer-links">
-            <a href="https://github.com/shantileemedia-developer/studiodesk/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy Policy</a>
-            <a href="https://github.com/shantileemedia-developer/studiodesk/blob/main/TERMS.md" target="_blank" rel="noreferrer">Terms of Service</a>
-            <a href="mailto:shantelbridget93@gmail.com">Support</a>
+          <div className="footer-top">
+            <div className="footer-logo">StudioDESK</div>
+            <div className="footer-links">
+              <a href="https://github.com/shantileemedia-developer/studiodesk/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy Policy</a>
+              <a href="https://github.com/shantileemedia-developer/studiodesk/blob/main/TERMS.md" target="_blank" rel="noreferrer">Terms of Service</a>
+              <a href="mailto:shantileemedia@gmail.com">Contact Support</a>
+            </div>
           </div>
+          <div className="footer-copy">© 2026 ShantiLee Media. All rights reserved.</div>
         </div>
       </footer>
     </div>

@@ -1,4 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
+import { AudioRouter } from '../audio/AudioRouter';
+import type { AudioBusId } from '../audio/AudioRouter';
 import { supabase } from '../lib/supabaseClient';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { RemoteInputEvent } from '../types/remote';
@@ -46,13 +48,61 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [rcRequested, setRcRequested] = useState(false);
   const [rcActive, setRcActive] = useState(false);
+  const [rcEngineerName, setRcEngineerName] = useState('Engineer');
+  const [rcViewOnly, setRcViewOnly] = useState(false);
+  const [audioDeviceControlAllowed, setAudioDeviceControlAllowed] = useState(false);
 
   const [incomingCall, setIncomingCall] = useState(false);
   const [callerId, setCallerId] = useState<string | null>(null);
   const [isCalling, setIsCalling] = useState(false);
   const [messages, setMessages] = useState<Array<{ id: string; sender: string; text: string; timestamp: number }>>([]);
 
-  // ── Video call peer connection refs ───────────────────────────────────────
+  // ── Audio bus management for this call ───────────────────────────────────
+  // Tracks which bus is currently feeding the call's audio track so we can
+  // release it cleanly when the call ends.
+  const activeBusRef = useRef<AudioBusId | null>(null);
+
+  const acquireCallAudioStream = useCallback((busId: AudioBusId): MediaStream | null => {
+    // Release any previously held bus before acquiring a new one
+    if (activeBusRef.current) {
+      AudioRouter.getInstance().releaseStream(activeBusRef.current);
+      activeBusRef.current = null;
+    }
+    const stream = AudioRouter.getInstance().getStream(busId);
+    if (stream) activeBusRef.current = busId;
+    return stream;
+  }, []);
+
+  const releaseCallAudio = useCallback(() => {
+    if (activeBusRef.current) {
+      AudioRouter.getInstance().releaseStream(activeBusRef.current);
+      activeBusRef.current = null;
+    }
+  }, []);
+
+  // ── Live bus swap (engineer can switch source without ending the call) ────
+  const switchCallAudioBus = useCallback(async (busId: AudioBusId) => {
+    const pc = pcRef.current;
+    const stream = acquireCallAudioStream(busId);
+    if (!stream || !pc) return;
+
+    const newTrack = stream.getAudioTracks()[0];
+    if (!newTrack) return;
+
+    const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+    if (sender) {
+      await sender.replaceTrack(newTrack);
+    }
+
+    // Also update localStream state so preview renders correctly
+    if (localStreamRef.current) {
+      const old = localStreamRef.current.getAudioTracks();
+      old.forEach(t => localStreamRef.current!.removeTrack(t));
+      localStreamRef.current.addTrack(newTrack);
+      setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+    }
+  }, [acquireCallAudioStream]);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const signalChannelRef = useRef<RealtimeChannel | null>(null);
@@ -69,8 +119,10 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   const pendingRcIceRef = useRef<RTCIceCandidateInit[]>([]);
   // Set by startScreenShare so the rc-offer handler can answer with the captured track
   const handleRcOfferRef = useRef<((offer: RTCSessionDescriptionInit) => Promise<void>) | null>(null);
+  const rcViewOnlyRef = useRef(false);
 
   useEffect(() => { onInputEventRef.current = onInputEvent; }, [onInputEvent]);
+  useEffect(() => { rcViewOnlyRef.current = rcViewOnly; }, [rcViewOnly]);
 
   const setupDataChannel = useCallback((dc: RTCDataChannel) => {
     dataChannelRef.current = dc;
@@ -193,8 +245,18 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     // ── RC signaling ─────────────────────────────────────────────────────────
 
     // Artist receives: engineer wants RC
-    channel.on('broadcast', { event: 'request-rc' }, () => {
-      if (!isInitiator) setRcRequested(true);
+    channel.on('broadcast', { event: 'request-rc' }, ({ payload }) => {
+      if (!isInitiator) {
+        setRcEngineerName(payload.engineerName ?? 'Engineer');
+        setRcRequested(true);
+      }
+    });
+
+    // Engineer receives: artist's permission decision
+    channel.on('broadcast', { event: 'rc-permission-response' }, ({ payload }) => {
+      if (!isInitiator || payload.from === userId) return;
+      if (payload.level === 'denied') { setRcRequested(false); return; }
+      setAudioDeviceControlAllowed(payload.audioDeviceControl ?? false);
     });
 
     // Either side: RC session ended
@@ -281,7 +343,29 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
 
   const startCallInternal = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      let stream: MediaStream;
+
+      // When the native engine owns the audio interface exclusively (ASIO/WASAPI),
+      // getUserMedia({audio}) would compete for the device and fail.
+      // Instead, subscribe to the 'mic-input' bus via AudioRouter which reuses
+      // the engine's already-open input stream.
+      const nativeAvail = await window.audioEngine?.isAvailable().catch(() => false);
+      if (nativeAvail) {
+        const busStream  = acquireCallAudioStream('mic-input');
+        const videoStream = await navigator.mediaDevices
+          .getUserMedia({ video: true, audio: false })
+          .catch(() => new MediaStream());
+        stream = new MediaStream([
+          ...videoStream.getVideoTracks(),
+          ...(busStream ? busStream.getAudioTracks() : []),
+        ]);
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+        });
+      }
+
       localStreamRef.current = stream;
       setLocalStream(stream);
       setCallActive(true);
@@ -369,6 +453,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   }, [roomCode, userId, isInitiator, createPeerConnection]);
 
   const endCall = useCallback(() => {
+    releaseCallAudio();
     if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
     if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
     if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; }
@@ -415,9 +500,9 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   // ── Remote Control API ────────────────────────────────────────────────────
 
   // Engineer: send RC request — works without an active call
-  const requestRemoteControl = useCallback(() => {
+  const requestRemoteControl = useCallback((engineerName = 'Engineer') => {
     if (!isInitiator) return;
-    signalChannelRef.current?.send({ type: 'broadcast', event: 'request-rc', payload: { from: userId } });
+    signalChannelRef.current?.send({ type: 'broadcast', event: 'request-rc', payload: { from: userId, engineerName } });
   }, [isInitiator, userId]);
 
   // Artist: capture screen and set up the RC answer handler, then signal engineer
@@ -474,6 +559,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
           pc.ondatachannel = (e) => {
             rcDataChannelRef.current = e.channel;
             e.channel.onmessage = (msg) => {
+              if (rcViewOnlyRef.current) return;
               try { onInputEventRef.current?.(JSON.parse(msg.data)); } catch {}
             };
           };
@@ -519,6 +605,21 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isInitiator, userId]);
 
+  // Artist: respond to the engineer's permission request
+  const respondToRcPermission = useCallback((level: 'full' | 'view' | 'denied', audioDevice: boolean) => {
+    signalChannelRef.current?.send({
+      type: 'broadcast', event: 'rc-permission-response',
+      payload: { level, audioDeviceControl: audioDevice, from: userId },
+    });
+    if (level === 'denied') {
+      setRcRequested(false);
+      return;
+    }
+    setRcViewOnly(level === 'view');
+    rcViewOnlyRef.current = level === 'view';
+    startScreenShare();
+  }, [userId, startScreenShare]);
+
   // Artist: stop sharing and revoke RC
   const revokeRemoteControl = useCallback(() => {
     if (screenTrackRef.current) { screenTrackRef.current.stop(); screenTrackRef.current = null; }
@@ -554,10 +655,15 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     localStream, remoteStream, remoteDawStream, remoteScreenStream,
     isConnected, callActive, isMicOn, isVideoOn,
     isScreenSharing, rcRequested, rcActive,
+    rcEngineerName, rcViewOnly, audioDeviceControlAllowed,
     incomingCall, isCalling, callerId, messages,
     ring, acceptCall, declineCall, sendMessage,
     endCall, toggleMic, toggleVideo,
     requestRemoteControl, startScreenShare, revokeRemoteControl, stopRemoteControl,
+    respondToRcPermission,
     sendInputEvent,
+    // Communication ↔ DAW bridge: lets engineer switch which bus feeds the call
+    switchCallAudioBus,
+    activeCallBus: activeBusRef.current,
   };
 };

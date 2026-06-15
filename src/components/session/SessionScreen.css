@@ -103,3 +103,95 @@
   background-color: #1e1e1e;
   color: #d1d1d1;
 }
+
+/* ── Artist code badge ── */
+
+.artist-code-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #00ffcc;
+}
+
+.artist-code-box {
+  border-color: #7c3aed;
+  color: #a78bfa;
+}
+
+/* ── Claim section ── */
+
+.claim-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.claim-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.claim-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.claim-input {
+  font-size: 18px !important;
+  letter-spacing: 3px !important;
+  flex: 1;
+}
+
+.claim-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0 18px;
+  height: 52px;
+  width: auto;
+}
+
+.claim-error {
+  font-size: 12px;
+  color: #ff6b6b;
+  margin: 0;
+}
+
+.session-input-sm {
+  font-size: 18px;
+  letter-spacing: 3px;
+  padding: 10px 16px;
+}
+
+/* ── Divider ── */
+
+.session-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  color: #444;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.session-divider::before,
+.session-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #2a2a2a;
+}
+.session-divider span {
+  white-space: nowrap;
+}

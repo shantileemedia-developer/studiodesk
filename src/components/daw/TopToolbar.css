@@ -27,6 +27,35 @@
   align-items: center;
   justify-content: flex-end;
   flex: 1;
+  gap: 4px;
+  overflow: hidden;
+}
+
+/* ── Zoom & density controls ── */
+.toolbar-tool-btn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  border-radius: 3px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.1s;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'Inter', sans-serif;
+}
+.toolbar-tool-btn:hover {
+  background-color: #2e2f33;
+  color: #d1d1d1;
+  border-color: #555;
+}
+.toolbar-tool-btn.active {
+  background-color: #1e3a38;
+  border-color: #00ffcc66;
+  color: #00ffcc;
 }
 
 .toolbar-section {
@@ -36,11 +65,13 @@
 }
 
 .toolbar-label {
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 700;
   color: #555;
-  letter-spacing: 0.6px;
-  margin-right: 5px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  align-self: center;
+  margin-right: 2px;
 }
 
 /* ── Tool buttons ───────────────────────────────── */

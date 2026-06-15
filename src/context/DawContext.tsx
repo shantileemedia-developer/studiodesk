@@ -1,5 +1,16 @@
 import React, { createContext, useContext, useReducer, useRef, useCallback } from 'react';
 
+export interface MeterValue {
+  L: number;       // instantaneous peak dBFS, floor = -90
+  R: number;
+  peakL: number;   // held peak dBFS
+  peakR: number;
+  peakLAt: number; // performance.now() when peak hold expires
+  peakRAt: number;
+  clipL: boolean;  // latched: set when L >= 0 dBFS, cleared by clearMeterClip()
+  clipR: boolean;
+}
+
 const TRACK_DEFAULT_COLORS = ['#808080'];
 
 export interface TrackVersion {
@@ -93,6 +104,13 @@ export interface DawState {
     metronomeOn: boolean;
     countInBars: number;
   };
+  trackZoom: number;
+  uiDensity: 'compact' | 'standard' | 'large';
+  panelSizes: {
+    inspectorWidth: number;
+    trackListWidth: number;
+    mixerHeight: number;
+  };
 }
 
 export type ActiveTool = 'select' | 'range' | 'draw' | 'erase' | 'split' | 'render' | 'mute' | 'zoom';
@@ -149,7 +167,10 @@ export type DawBaseAction =
   | { type: 'SET_STATE'; payload: Partial<DawState> }
   | { type: 'RENAME_PROJECT'; payload: string }
   | { type: 'SET_REGION_GAIN'; payload: { id: string; gain: number } }
-  | { type: 'SET_POOL_ITEM_UPLOAD_STATUS'; payload: { id: string; status: 'uploading' | 'done' | 'failed'; storagePath?: string } };
+  | { type: 'SET_POOL_ITEM_UPLOAD_STATUS'; payload: { id: string; status: 'uploading' | 'done' | 'failed'; storagePath?: string } }
+  | { type: 'SET_TRACK_ZOOM'; payload: number }
+  | { type: 'SET_UI_DENSITY'; payload: 'compact' | 'standard' | 'large' }
+  | { type: 'SET_PANEL_SIZE'; payload: Partial<{ inspectorWidth: number; trackListWidth: number; mixerHeight: number }> };
 
 export type DawAction = DawBaseAction & { fromSync?: boolean };
 
@@ -204,6 +225,9 @@ export const initialState: DawState = {
   selectedRegionIds: [],
   snapOn: true,
   snapValue: '1/16',
+  trackZoom: 1.0,
+  uiDensity: 'standard' as const,
+  panelSizes: { inspectorWidth: 220, trackListWidth: 210, mixerHeight: 420 },
   transport: {
     isPlaying: false,
     isRecording: false,
@@ -239,6 +263,9 @@ function dawReducer(state: DawState, action: DawAction): DawState {
     case 'SELECT_TRACK':
     case 'SELECT_REGION':
     case 'SET_SNAP':
+    case 'SET_TRACK_ZOOM':
+    case 'SET_UI_DENSITY':
+    case 'SET_PANEL_SIZE':
       return coreReducer(state, action);
     default: {
       const newState = coreReducer(state, action);
@@ -675,6 +702,22 @@ function coreReducer(state: DawState, action: DawAction): DawState {
         ),
       };
 
+    case 'SET_TRACK_ZOOM': {
+      const scale = action.payload / state.trackZoom;
+      return {
+        ...state,
+        trackZoom: action.payload,
+        tracks: state.tracks.map(t => ({
+          ...t,
+          height: Math.max(50, Math.round((t.height ?? 80) * scale)),
+        })),
+      };
+    }
+    case 'SET_UI_DENSITY':
+      return { ...state, uiDensity: action.payload };
+    case 'SET_PANEL_SIZE':
+      return { ...state, panelSizes: { ...state.panelSizes, ...action.payload } };
+
     default:
       return state;
   }
@@ -707,6 +750,9 @@ interface DawContextValue {
 
   // Set by useAudioEngine so any component can trigger a re-upload by pool item id
   retryUploadRef: React.MutableRefObject<((poolItemId: string) => void) | null>;
+
+  meterValuesRef: React.MutableRefObject<Record<string, MeterValue>>;
+  clearMeterClip: (id: string) => void;
 }
 
 interface DawProviderProps {
@@ -735,6 +781,11 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
   const [projectDirHandle, setProjectDirHandle] = React.useState<any | null>(null);
   const [audioDirHandle, setAudioDirHandle] = React.useState<any | null>(null);
   const retryUploadRef = useRef<((poolItemId: string) => void) | null>(null);
+  const meterValuesRef = useRef<Record<string, MeterValue>>({});
+  const clearMeterClip = useCallback((id: string) => {
+    const v = meterValuesRef.current[id];
+    if (v) { v.clipL = false; v.clipR = false; }
+  }, []);
 
   const dispatch = useCallback((action: DawAction) => {
     if (middlewareRef.current) {
@@ -749,10 +800,11 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
   }, []);
 
   return (
-    <DawContext.Provider value={{ 
+    <DawContext.Provider value={{
       state, dispatch, originalDispatch, setDispatchMiddleware, currentTimeRef, audioCtxRef, recordingStartTimeRef, animFrameRef, masterStreamRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, nativeMasterLevelsRef, userRole,
       projectDirHandle, setProjectDirHandle, audioDirHandle, setAudioDirHandle,
       retryUploadRef,
+      meterValuesRef, clearMeterClip,
     }}>
       {children}
     </DawContext.Provider>

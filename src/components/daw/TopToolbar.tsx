@@ -173,6 +173,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({ roomCode, userRole, onlineCount
 
       {/* ── flex spacer right ───────────────────────── */}
       <div className="toolbar-right" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: '20px', gap: '15px' }}>
+
         {roomCode && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1a1b1e', padding: '4px 10px', borderRadius: '4px', border: '1px solid #333' }}>
             <span style={{ fontSize: '10px', color: '#888', textTransform: 'uppercase' }}>Session ID:</span>

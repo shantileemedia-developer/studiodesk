@@ -1,20 +1,21 @@
-.track-list {
-  width: 240px;
-  min-width: 210px;
+﻿.track-list {
+  width: var(--tracklist-w, 210px);
+  min-width: 160px;
+  max-width: 320px;
   background-color: #212225;
   border-right: 1px solid #1a1b1e;
   display: flex;
   flex-direction: column;
 }
 
-/* ── Ruler spacer — mirrors the two rulers in ArrangeWindow ── */
+/* â”€â”€ Ruler spacer â€” mirrors the two rulers in ArrangeWindow â”€â”€ */
 .track-ruler-spacer {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* Unified header — spans bar-ruler height (36px) + time-ruler height (22px) = 58px total.
+/* Unified header â€” spans bar-ruler height (36px) + time-ruler height (22px) = 58px total.
    Kept as one block so the time-ruler color doesn't bleed visually into the track strip. */
 .track-ruler-header {
   height: 58px;
@@ -187,7 +188,7 @@
   min-height: 60px;
 }
 
-/* ── Drag handle ───────────────────────────────────────── */
+/* â”€â”€ Drag handle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .drag-handle {
   display: flex;
   align-items: center;
@@ -205,7 +206,7 @@
   cursor: grabbing;
 }
 
-/* ── Drag-and-drop states ──────────────────────────────── */
+/* â”€â”€ Drag-and-drop states â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .track-header.dragging {
   opacity: 0.35;
   background-color: #1a1b1e;
@@ -245,7 +246,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 7px 8px 6px;
+  padding: var(--track-pad, 7px 8px 6px);
   min-width: 0;
   position: relative;
   overflow: visible;
@@ -266,7 +267,7 @@
 }
 
 .track-name {
-  font-size: 13px;
+  font-size: var(--font-track, 13px);
   font-weight: 500;
   color: #d8d8d8;
   text-overflow: ellipsis;
@@ -292,13 +293,13 @@
 }
 
 .track-btn {
-  width: 26px;
-  height: 22px;
+  width: var(--btn-w, 26px);
+  height: var(--btn-h, 22px);
   border-radius: 2px;
   border: 1px solid #333;
   background-color: #1a1b1e;
   color: #888;
-  font-size: 10px;
+  font-size: var(--btn-font, 10px);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -401,15 +402,14 @@
   background-color: rgba(0, 255, 204, 0.3);
 }
 
-/* ── Responsive scaling ── */
-@media screen and (max-width: 1440px) {
-  .track-list {
-    width: 200px;
-  }
+/* Track list width and track-btn sizes are driven by CSS variables set in DawWorkspace */
+
+/* -- Track mini meter canvas --------------------------------- */
+.track-mini-meter {
+  width: 100%;
+  height: 10px;
+  display: block;
+  border-radius: 1px;
+  margin-top: 2px;
 }
-@media screen and (max-width: 1280px) {
-  .track-list {
-    width: 180px;
-    min-width: 180px;
-  }
-}
+

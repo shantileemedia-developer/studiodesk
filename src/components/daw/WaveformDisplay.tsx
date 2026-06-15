@@ -78,8 +78,11 @@ function drawWaveform(
   const cssH = canvas.clientHeight;
   if (cssW === 0 || cssH === 0 || peaks.length === 0) return;
 
-  const needW = Math.round(cssW * dpr);
-  const needH = Math.round(cssH * dpr);
+  // Cap buffer at 8192px — browsers silently zero the canvas above ~16384px (shows black).
+  // CSS width:100% still stretches the buffer to fill the clip visually.
+  const MAX_BUF = 8192;
+  const needW = Math.min(MAX_BUF, Math.round(cssW * dpr));
+  const needH = Math.min(MAX_BUF, Math.round(cssH * dpr));
   if (canvas.width !== needW || canvas.height !== needH) {
     canvas.width  = needW;
     canvas.height = needH;
@@ -87,7 +90,10 @@ function drawWaveform(
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Use actual buffer size for transform, not DPR, since we may have clamped
+  const scaleX = needW / cssW;
+  const scaleY = needH / cssH;
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
 
   const W = cssW;
   const H = cssH;

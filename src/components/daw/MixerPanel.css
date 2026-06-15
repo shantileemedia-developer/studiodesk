@@ -1,10 +1,11 @@
-/* ─── MixerPanel — Cubase Style ──────────────────────────────────────────────── */
+﻿/* â”€â”€â”€ MixerPanel â€” Cubase Style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .mixer-panel {
   display: flex;
   flex-direction: column;
-  height: 420px;
-  min-height: 220px;
+  height: var(--mixer-h, 420px);
+  min-height: 200px;
+  max-height: 560px;
   flex-shrink: 0;
   background: linear-gradient(180deg, #1a1c2e 0%, #14151f 100%);
   border-top: 2px solid #0a0a0e;
@@ -13,7 +14,7 @@
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* ── Header ──────────────────────────────────────────────── */
+/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mixer-header {
   display: flex;
   align-items: center;
@@ -46,7 +47,7 @@
 }
 .mixer-header-info { font-size: 10px; color: #555; }
 
-/* ── Body ────────────────────────────────────────────────── */
+/* â”€â”€ Body â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mixer-body {
   display: flex;
   flex: 1;
@@ -70,7 +71,7 @@
 .mixer-channels::-webkit-scrollbar-thumb { background: #3a3a44; border-radius: 3px; }
 .mixer-master-divider { width: 2px; background: #0a0a0e; flex-shrink: 0; }
 
-/* ── Channel Strip ───────────────────────────────────────── */
+/* â”€â”€ Channel Strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mixer-ch {
   display: flex;
   flex-direction: column;
@@ -97,7 +98,7 @@
   overflow: visible; /* allow color picker popup to escape */
 }
 
-/* ── Group bar ───────────────────────────────────────────── */
+/* â”€â”€ Group bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-group-bar {
   width: 100%;
   margin-bottom: 4px;
@@ -119,12 +120,12 @@
   justify-content: space-between;
 }
 .mch-group-select::after {
-  content: '▾';
+  content: 'â–¾';
   font-size: 8px;
   color: #666;
 }
 
-/* ── LED dot ─────────────────────────────────────────────── */
+/* â”€â”€ LED dot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-led {
   width: 7px;
   height: 7px;
@@ -133,7 +134,7 @@
   margin: 2px auto 2px;
 }
 
-/* ── Pan LCD (above knob) ────────────────────────────────── */
+/* â”€â”€ Pan LCD (above knob) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-pan-lcd {
   display: flex;
   width: 100%;
@@ -157,7 +158,7 @@
 .mch-pan-seg.left  { text-align: left; }
 .mch-pan-seg.right { text-align: right; color: #999; }
 
-/* ── Knob row ────────────────────────────────────────────── */
+/* â”€â”€ Knob row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-knob-row {
   display: flex;
   align-items: center;
@@ -177,7 +178,7 @@
   justify-content: center;
 }
 
-/* ── Button rows ─────────────────────────────────────────── */
+/* â”€â”€ Button rows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-btn-row {
   display: flex;
   gap: 4px;
@@ -260,7 +261,7 @@
 }
 .mch-mute-btn.on { background: linear-gradient(180deg, #8a2e00, #cc4800); color: #fff; }
 
-/* ── Strip: scale | L-meter | fader | R-meter | scale ───── */
+/* â”€â”€ Strip: scale | L-meter | fader | R-meter | scale â”€â”€â”€â”€â”€ */
 .mch-fader-area {
   display: flex;
   flex-direction: row;
@@ -300,7 +301,7 @@
   display: flex;
 }
 
-/* Fader column — remaining space */
+/* Fader column â€” remaining space */
 .mch-fader-col {
   flex: 1;
   position: relative;
@@ -330,7 +331,7 @@
 /* VU canvas fills its column */
 .mixer-vu-canvas { width: 100%; height: 100%; display: block; }
 
-/* ── Vertical fader internals ────────────────────────────── */
+/* â”€â”€ Vertical fader internals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .vfader-wrap {
   position: relative;
   width: 100%;
@@ -369,7 +370,7 @@
   flex-shrink: 0;
 }
 
-/* ── Peak readout ────────────────────────────────────────── */
+/* â”€â”€ Peak readout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-peak-box {
   width: 100%;
   background: #0d0f1a;
@@ -388,7 +389,7 @@
   color: #22cc22;
 }
 
-/* ── Routing / din row ───────────────────────────────────── */
+/* â”€â”€ Routing / din row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-routing-row {
   display: flex;
   align-items: center;
@@ -429,7 +430,7 @@
   white-space: nowrap;
 }
 
-/* ── Track name bar ──────────────────────────────────────── */
+/* â”€â”€ Track name bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mch-name-bar {
   width: 100%;
   border-top: 3px solid transparent;
@@ -458,7 +459,7 @@
 }
 .mch-name-input:focus { background: rgba(0,0,0,0.4); }
 
-/* ── Master color picker ─────────────────────────────────── */
+/* â”€â”€ Master color picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .master-color-swatch {
   width: 10px;
   height: 10px;
@@ -504,10 +505,21 @@
   box-shadow: 0 0 0 1px rgba(255,255,255,0.4);
 }
 
-/* ── Responsive ──────────────────────────────────────────── */
-@media (max-height: 820px) {
-  .mixer-panel { height: 310px; min-height: 200px; }
+/* ── Mixer channel strip uses density tokens from DawWorkspace ── */
+.mch-btn {
+  width: var(--btn-w, 30px);
+  height: var(--btn-h, 24px);
+  font-size: var(--btn-font, 9px);
 }
-@media (max-height: 680px) {
-  .mixer-panel { height: 250px; min-height: 160px; }
+
+/* -- Clip LED ------------------------------------------------- */
+.mch-clip-led {
+  width: 100%;
+  height: 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  background: #1a0500;
+  margin-bottom: 2px;
+  transition: background 0.05s;
 }
+

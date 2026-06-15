@@ -7,10 +7,15 @@ const SYNCABLE_ACTIONS = new Set([
   'ADD_TRACK', 'REMOVE_TRACK', 'UPDATE_TRACK', 'REORDER_TRACKS', 'RENAME_TRACK',
   'ADD_VERSION', 'SWITCH_VERSION',
   'ADD_REGION', 'REMOVE_REGION', 'MOVE_REGION', 'SPLIT_REGION', 'TOGGLE_REGION_MUTE', 'RENDER_REGIONS',
+  'UPDATE_REGION', 'SET_REGION_GAIN',
   'ADD_POOL_ITEM', 'REMOVE_POOL_ITEM',
+  'UPDATE_AUDIO_URLS',          // CRITICAL: syncs Supabase public URL to engineer after upload
+  'SET_POOL_ITEM_UPLOAD_STATUS', // syncs upload progress badge to engineer
   'SET_TEMPO', 'SET_TIME_SIGNATURE',
   'RENAME_PROJECT',   // project name must sync to all peers
   'SET_RECORDING',    // recording state indicator shown on both sides
+  'ADD_CROSSFADE', 'REMOVE_CROSSFADE',
+  'DUPLICATE_TRACK',
 ]);
 
 export const useDawSync = (roomCode: string) => {

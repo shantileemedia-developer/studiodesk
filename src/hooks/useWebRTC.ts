@@ -45,6 +45,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [remoteDesktopStream, setRemoteDesktopStream] = useState<MediaStream | null>(null);
   const [rcRequested, setRcRequested] = useState(false);
   const [rcActive, setRcActive] = useState(false);
   const [rcEngineerName, setRcEngineerName] = useState('Engineer');
@@ -299,6 +300,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       setRcActive(false);
       setIsScreenSharing(false);
       setRcRequested(false);
+      setRemoteDesktopStream(null);
       handleRcOfferRef.current = null;
       if (rcDataChannelRef.current) { rcDataChannelRef.current.close(); rcDataChannelRef.current = null; }
       if (rcPcRef.current) { rcPcRef.current.close(); rcPcRef.current = null; }
@@ -320,15 +322,25 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') { setRcActive(true); setRcRequested(false); }
         if (pc.connectionState === 'failed') pc.restartIce();
-        if (pc.connectionState === 'closed') { setRcActive(false); }
+        if (pc.connectionState === 'closed') { setRcActive(false); setRemoteDesktopStream(null); }
       };
 
-      // Data channel carries input events from engineer → artist (no video needed)
+      // Receive artist's screen capture video track
+      pc.ontrack = ({ streams }) => {
+        if (streams[0]) setRemoteDesktopStream(streams[0]);
+      };
+
+      // Data channel carries input events from engineer → artist
       const dc = pc.createDataChannel('rc-input', { ordered: false, maxRetransmits: 0 });
       dc.onmessage = (e) => {
         try { onInputEventRef.current?.(JSON.parse(e.data)); } catch {}
       };
       rcDataChannelRef.current = dc;
+
+      // Without a recvonly transceiver the offer SDP has no video section,
+      // so the artist's screen track is silently dropped when they answer.
+      pc.addTransceiver('video', { direction: 'recvonly' });
+
       rcPcRef.current = pc;
 
       const offer = await pc.createOffer();
@@ -573,6 +585,17 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     handleRcOfferRef.current = async (offer: RTCSessionDescriptionInit) => {
       handleRcOfferRef.current = null;
       try {
+        // Capture artist's desktop — shown to engineer as the Desktop Control video feed
+        let screenStream: MediaStream | null = null;
+        try {
+          screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: 30, max: 30 } },
+            audio: false,
+          });
+        } catch {
+          // Artist declined screen capture — continue with data-channel-only control
+        }
+
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
         pc.onicecandidate = ({ candidate }) => {
@@ -595,13 +618,35 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
         pc.onconnectionstatechange = () => {
           if (pc.connectionState === 'connected') setRcActive(true);
           if (pc.connectionState === 'failed') pc.restartIce();
-          if (pc.connectionState === 'closed') { setRcActive(false); setIsScreenSharing(false); }
+          if (pc.connectionState === 'closed') {
+            setRcActive(false);
+            setIsScreenSharing(false);
+            screenStream?.getTracks().forEach(t => t.stop());
+          }
         };
 
         rcPcRef.current = pc;
+
+        // setRemoteDescription must come before addTrack so the video transceiver
+        // created by the engineer's recvonly offer m-line is already in place when
+        // we attach the screen track — otherwise a mis-matched sendrecv transceiver
+        // is created and the video is silently dropped.
         await pc.setRemoteDescription(offer);
         for (const c of pendingRcIceRef.current) await pc.addIceCandidate(c).catch(() => {});
         pendingRcIceRef.current = [];
+
+        // Add screen video tracks after SRD so they bind to the existing transceiver
+        if (screenStream) {
+          screenStream.getVideoTracks().forEach(track => {
+            pc.addTrack(track, screenStream!);
+            // Stop sharing if artist dismisses the OS screen-share picker
+            track.onended = () => {
+              setIsScreenSharing(false);
+              setRcActive(false);
+              signalChannelRef.current?.send({ type: 'broadcast', event: 'stop-rc', payload: { from: userId } });
+            };
+          });
+        }
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -636,8 +681,10 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     startScreenShare();
   }, [userId, startScreenShare]);
 
-  // Artist: revoke RC
+  // Artist: revoke RC / Desktop Control
   const revokeRemoteControl = useCallback(() => {
+    // Stop any screen capture tracks on the RC peer connection
+    rcPcRef.current?.getSenders().forEach(s => { s.track?.stop(); });
     if (rcDataChannelRef.current) { rcDataChannelRef.current.close(); rcDataChannelRef.current = null; }
     if (rcPcRef.current) { rcPcRef.current.close(); rcPcRef.current = null; }
     pendingRcIceRef.current = [];
@@ -682,7 +729,7 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   useEffect(() => { return () => { endCall(); }; }, [endCall]);
 
   return {
-    localStream, remoteStream, remoteDawStream,
+    localStream, remoteStream, remoteDawStream, remoteDesktopStream,
     isConnected, callActive, isMicOn, isVideoOn,
     isScreenSharing, rcRequested, rcActive,
     rcEngineerName, rcViewOnly, audioDeviceControlAllowed,

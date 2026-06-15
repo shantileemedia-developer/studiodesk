@@ -785,12 +785,26 @@
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: rgba(0, 255, 204, 0.1);
-  border: 1px solid rgba(0, 255, 204, 0.25);
+  background: rgba(255, 119, 68, 0.1);
+  border: 1px solid rgba(255, 119, 68, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 4px;
+}
+
+.rc-consent-warning {
+  font-size: 11px;
+  color: #ff7744;
+  text-align: center;
+  margin: 0;
+  line-height: 1.5;
+  background: rgba(255, 119, 68, 0.08);
+  border: 1px solid rgba(255, 119, 68, 0.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .rc-consent-title {
@@ -835,10 +849,10 @@
 .rc-consent-btn.decline:hover { background: #333; color: #ccc; }
 
 .rc-consent-btn.accept {
-  background: #00ffcc;
-  color: #000;
+  background: #ff7744;
+  color: #fff;
 }
-.rc-consent-btn.accept:hover { background: #00e6b8; }
+.rc-consent-btn.accept:hover { background: #ff6030; }
 
 .rc-consent-btn.view-only {
   background: #2a2b2e;
@@ -923,4 +937,35 @@
   font-weight: 700;
   min-width: 26px;
   text-align: right;
+}
+
+/* ── Desktop Control screen stream ───────────────────────────────── */
+.desktop-stream-container {
+  position: relative;
+  width: 100%;
+  background: #0d0e10;
+  border-top: 1px solid #2a2b2e;
+  flex-shrink: 0;
+}
+
+.desktop-stream-label {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #ff7744;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: rgba(0,0,0,0.6);
+  padding: 2px 6px;
+  border-radius: 3px;
+  z-index: 1;
+}
+
+.desktop-stream-video {
+  width: 100%;
+  display: block;
+  max-height: 240px;
+  object-fit: contain;
 }

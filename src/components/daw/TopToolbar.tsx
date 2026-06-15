@@ -47,9 +47,10 @@ interface TopToolbarProps {
   roomCode?: string;
   userRole?: 'artist' | 'engineer';
   onlineCount?: number;
+  desktopActive?: boolean;
 }
 
-const TopToolbar: React.FC<TopToolbarProps> = ({ roomCode, userRole, onlineCount }) => {
+const TopToolbar: React.FC<TopToolbarProps> = ({ roomCode, userRole, onlineCount, desktopActive }) => {
   const { state, dispatch } = useDaw();
   const { activeTool, selectedTrackId, tracks } = state;
 
@@ -172,23 +173,33 @@ const TopToolbar: React.FC<TopToolbarProps> = ({ roomCode, userRole, onlineCount
       </div>
 
       {/* ── flex spacer right ───────────────────────── */}
-      <div className="toolbar-right" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: '20px', gap: '15px' }}>
+      <div className="toolbar-right" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: '20px', gap: '10px' }}>
 
+        {/* Session + Desktop Control status — shown when in a room */}
         {roomCode && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1a1b1e', padding: '4px 10px', borderRadius: '4px', border: '1px solid #333' }}>
-            <span style={{ fontSize: '10px', color: '#888', textTransform: 'uppercase' }}>Session ID:</span>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: '#00ffcc', fontFamily: 'monospace', letterSpacing: '1px' }}>{roomCode}</span>
+          <div className="session-status-chip">
+            <div className={`session-dot ${(onlineCount ?? 0) > 1 ? 'connected' : 'solo'}`} />
+            <span className="session-status-label">
+              {(onlineCount ?? 0) > 1 ? 'Session Connected' : 'Session Solo'}
+            </span>
+            <div className="session-status-sep" />
+            <span className={`desktop-status-label ${desktopActive ? 'active' : ''}`}>
+              Desktop: {desktopActive ? 'ACTIVE' : 'OFF'}
+            </span>
           </div>
         )}
-        {onlineCount !== undefined && (
-          <div style={{ fontSize: '11px', color: '#a0a0a0', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px', background: '#1a1b1e', padding: '4px 8px', borderRadius: '4px', border: '1px solid #333' }}>
-            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: onlineCount > 1 ? '#00cc66' : '#888' }}></div>
-            {onlineCount > 1 ? `${onlineCount} Online` : 'Only You'}
+
+        {/* Room code — compact */}
+        {roomCode && (
+          <div style={{ fontSize: '10px', color: '#555', fontFamily: 'monospace', letterSpacing: '1px' }}>
+            {roomCode}
           </div>
         )}
+
+        {/* Role badge */}
         {userRole && (
           <div style={{ fontSize: '11px', color: '#a0a0a0', textTransform: 'uppercase', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: userRole === 'engineer' ? '#ff4d4d' : '#00ffcc' }}></div>
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: userRole === 'engineer' ? '#ff4d4d' : '#00ffcc' }} />
             {userRole}
           </div>
         )}

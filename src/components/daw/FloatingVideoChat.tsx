@@ -163,6 +163,20 @@ const VideoGrid: React.FC<VideoGridProps> = memo(({
   );
 });
 
+// ── Desktop Control video feed (artist's captured screen → engineer) ─────────
+const DesktopStreamView: React.FC<{ stream: MediaStream }> = ({ stream }) => {
+  const vidRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (vidRef.current) vidRef.current.srcObject = stream;
+  }, [stream]);
+  return (
+    <div className="desktop-stream-container">
+      <div className="desktop-stream-label">Desktop Control</div>
+      <video ref={vidRef} autoPlay playsInline muted className="desktop-stream-video" />
+    </div>
+  );
+};
+
 const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   userRole, userId, roomCode, onInputEvent, onRcStateChange, masterStreamRef, audioCtxRef,
 }) => {
@@ -197,7 +211,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   const monitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   const {
-    localStream, remoteStream, remoteDawStream, isConnected, callActive,
+    localStream, remoteStream, remoteDawStream, remoteDesktopStream, isConnected, callActive,
     isMicOn, isVideoOn,
     incomingCall, isCalling, callerId, messages,
     ring, acceptCall, declineCall, sendMessage,
@@ -427,16 +441,20 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     document.body,
   ) : null;
 
-  // ── RC permission dialog — fullscreen portal, shown to artist on RC request ─
+  // ── Desktop Control consent dialog — fullscreen portal, shown to artist on request ─
   const rcConsentModal = rcRequested && !rcDenied && userRole === 'artist' ? createPortal(
     <div className="rc-consent-overlay">
       <div className="rc-consent-card">
         <div className="rc-consent-monitor-icon">
-          <MonitorPlay size={32} color="#00ffcc" />
+          <MonitorPlay size={32} color="#ff7744" />
         </div>
-        <h3 className="rc-consent-title">Remote Control Request</h3>
+        <h3 className="rc-consent-title">Desktop Control Request</h3>
         <p className="rc-consent-body">
-          <strong>{rcEngineerName}</strong> is requesting control of your session.
+          <strong>{rcEngineerName}</strong> is requesting <strong>Desktop Control</strong> of your computer.
+        </p>
+        <p className="rc-consent-warning">
+          This grants OS-level access — the engineer can see and control your entire screen,
+          including applications outside the DAW. You can revoke at any time.
         </p>
         <label className="rc-audio-consent-row">
           <input
@@ -444,20 +462,20 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
             checked={rcAudioDeviceConsent}
             onChange={e => setRcAudioDeviceConsent(e.target.checked)}
           />
-          <span>Allow engineer to modify audio settings</span>
+          <span>Allow engineer to modify audio device settings</span>
         </label>
         <div className="rc-consent-actions">
           <button className="rc-consent-btn decline"
             onClick={() => { setRcDenied(true); respondToRcPermission('denied', false); }}>
-            Cancel
+            Decline
           </button>
           <button className="rc-consent-btn view-only"
             onClick={() => { respondToRcPermission('view', rcAudioDeviceConsent); }}>
-            View Only
+            Screen View Only
           </button>
           <button className="rc-consent-btn accept"
             onClick={() => { respondToRcPermission('full', rcAudioDeviceConsent); }}>
-            Allow Full Control
+            Allow Full Desktop Control
           </button>
         </div>
       </div>
@@ -535,6 +553,11 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
           setShowLocalCam={setShowLocalCam}
           userRole={userRole}
         />
+
+        {/* Desktop Control stream — shown to engineer when artist shares screen */}
+        {userRole === 'engineer' && remoteDesktopStream && (
+          <DesktopStreamView stream={remoteDesktopStream} />
+        )}
 
         {showChat && (
           <div className="chat-pane">
@@ -641,14 +664,17 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
                 <option value="master-output">Master Out</option>
               </select>
             )}
-            {/* RC button — always available for engineer, no call required */}
+            {/* Desktop Control button — System B, separate from DAW session */}
             {userRole === 'engineer' && (
               <button
                 className={`control-btn rc-btn ${rcActive ? 'active' : ''}`}
                 onClick={rcActive ? stopRemoteControl : () => requestRemoteControl(userId)}
-                title={rcActive ? 'Stop remote control' : 'Request remote control'}
+                title={rcActive ? 'Stop Desktop Control' : 'Request Desktop Access'}
               >
                 {rcActive ? <MonitorX size={18} /> : <MonitorPlay size={18} />}
+                <span style={{ fontSize: 10, marginLeft: 4, whiteSpace: 'nowrap' }}>
+                  {rcActive ? 'Stop Desktop' : 'Desktop'}
+                </span>
               </button>
             )}
           </div>

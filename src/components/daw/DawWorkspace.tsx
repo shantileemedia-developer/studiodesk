@@ -357,7 +357,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
       {showPreferences && <PreferencesDialog onClose={() => setShowPreferences(false)} />}
       {showAudioPrefs && <AudioMIDIPreferencesDialog onClose={() => setShowAudioPrefs(false)} />}
       {showLyrics && <LyricsPanel onClose={() => setShowLyrics(false)} />}
-      <TopToolbar roomCode={roomCode} userRole={userRole} onlineCount={onlineCount} />
+      <TopToolbar roomCode={roomCode} userRole={userRole} onlineCount={onlineCount} desktopActive={rcActive} />
 
       {toast && (
         <div key={toast.id} className="daw-toast-notification">

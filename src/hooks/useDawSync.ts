@@ -4,18 +4,26 @@ import { useDaw } from '../context/DawContext';
 import type { DawAction, DawState } from '../context/DawContext';
 
 const SYNCABLE_ACTIONS = new Set([
+  // ── Track / region / project ───────────────────────────────────────────────
   'ADD_TRACK', 'REMOVE_TRACK', 'UPDATE_TRACK', 'REORDER_TRACKS', 'RENAME_TRACK',
   'ADD_VERSION', 'SWITCH_VERSION',
   'ADD_REGION', 'REMOVE_REGION', 'MOVE_REGION', 'SPLIT_REGION', 'TOGGLE_REGION_MUTE', 'RENDER_REGIONS',
   'UPDATE_REGION', 'SET_REGION_GAIN',
   'ADD_POOL_ITEM', 'REMOVE_POOL_ITEM',
-  'UPDATE_AUDIO_URLS',          // CRITICAL: syncs Supabase public URL to engineer after upload
+  'UPDATE_AUDIO_URLS',           // CRITICAL: syncs Supabase public URL to engineer after upload
   'SET_POOL_ITEM_UPLOAD_STATUS', // syncs upload progress badge to engineer
-  'SET_TEMPO', 'SET_TIME_SIGNATURE',
-  'RENAME_PROJECT',   // project name must sync to all peers
-  'SET_RECORDING',    // recording state indicator shown on both sides
+  'RENAME_PROJECT',
   'ADD_CROSSFADE', 'REMOVE_CROSSFADE',
   'DUPLICATE_TRACK',
+  // ── Transport (System A — Shared Session Control) ──────────────────────────
+  'SET_PLAYING',     // play / stop — engineer pressing Play triggers artist's engine
+  'SET_RECORDING',   // record state shown on both sides
+  'SET_TEMPO', 'SET_TIME_SIGNATURE',
+  'TOGGLE_LOOP', 'SET_LOOP_RANGE',
+  'SET_PUNCH_RANGE',
+  'TOGGLE_METRONOME', 'SET_COUNT_IN',
+  // NOTE: SET_CURRENT_TIME is excluded — it fires every audio frame during playback
+  // and would flood the channel. Seek sync is handled separately if needed.
 ]);
 
 export const useDawSync = (roomCode: string) => {

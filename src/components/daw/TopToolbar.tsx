@@ -189,10 +189,11 @@ const TopToolbar: React.FC<TopToolbarProps> = ({ roomCode, userRole, onlineCount
           </div>
         )}
 
-        {/* Room code — compact */}
+        {/* Room code badge */}
         {roomCode && (
-          <div style={{ fontSize: '10px', color: '#555', fontFamily: 'monospace', letterSpacing: '1px' }}>
-            {roomCode}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1a1b1e', padding: '4px 10px', borderRadius: '4px', border: '1px solid #333' }}>
+            <span style={{ fontSize: '10px', color: '#888', textTransform: 'uppercase' }}>Session ID:</span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: '#00ffcc', fontFamily: 'monospace', letterSpacing: '1px' }}>{roomCode}</span>
           </div>
         )}
 

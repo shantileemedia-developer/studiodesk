@@ -545,10 +545,9 @@ const ArrangeWindow = ({ onSeek }: { onSeek?: (t: number) => void }) => {
               const { left: peaks, right: peaksR } = await generatePeaksStereo(rendered);
               const wavAb      = audioBufferToWav(rendered);
               const wavBlob    = new Blob([wavAb], { type: 'audio/wav' });
-              const blobUrl    = URL.createObjectURL(wavBlob);
               const bounceName = `Bounce_${selTrack.name}`;
               const stamp      = Date.now();
-              const newUrl     = await uploadAudioToSupabase(wavBlob, `${bounceName}_${stamp}.wav`) || blobUrl;
+              const { publicUrl: newUrl } = await uploadAudioToSupabase(wavBlob, `${bounceName}_${stamp}.wav`);
 
               const bncPoolId = `pool_bnc_${stamp}`;
               dispatch({ type: 'BOUNCE_REGIONS', payload: {
@@ -604,7 +603,7 @@ const ArrangeWindow = ({ onSeek }: { onSeek?: (t: number) => void }) => {
                   const wavBlob    = new Blob([wavAb], { type: 'audio/wav' });
                   const stamp      = Date.now();
                   const bounceName = `Bounce_Selection_${stamp}`;
-                  const newUrl     = await uploadAudioToSupabase(wavBlob, `${bounceName}.wav`) || URL.createObjectURL(wavBlob);
+                  const { publicUrl: newUrl } = await uploadAudioToSupabase(wavBlob, `${bounceName}.wav`);
                   const bncPoolId  = `pool_bnc_${stamp}`;
                   dispatch({ type: 'BOUNCE_REGIONS', payload: {
                     regionIds: lassoIds,
@@ -658,10 +657,9 @@ const ArrangeWindow = ({ onSeek }: { onSeek?: (t: number) => void }) => {
               const { left: peaks, right: peaksR } = await generatePeaksStereo(rendered);
               const wavAb      = audioBufferToWav(rendered);
               const wavBlob    = new Blob([wavAb], { type: 'audio/wav' });
-              const blobUrl    = URL.createObjectURL(wavBlob);
               const bounceName = `Bounce_${region.name}`;
               const stamp      = Date.now();
-              const newUrl     = await uploadAudioToSupabase(wavBlob, `${bounceName}_${stamp}.wav`) || blobUrl;
+              const { publicUrl: newUrl } = await uploadAudioToSupabase(wavBlob, `${bounceName}_${stamp}.wav`);
 
               const bncPoolId = `pool_bnc_${stamp}`;
               dispatch({ type: 'BOUNCE_REGIONS', payload: {
@@ -990,7 +988,6 @@ const ArrangeWindow = ({ onSeek }: { onSeek?: (t: number) => void }) => {
 
     const onUp = (e: MouseEvent) => {
       if (!lassoOriginRef.current) return;
-      const origin = lassoOriginRef.current;
       lassoOriginRef.current = null;
 
       if (!lassoBox) {
@@ -1249,9 +1246,9 @@ const ArrangeWindow = ({ onSeek }: { onSeek?: (t: number) => void }) => {
 
       dispatch({ type: 'ADD_POOL_ITEM', payload: { id: cropPoolId, name: cropName, audioUrl: blobUrl, duration: region.duration, createdAt: new Date(), waveformPeaks: peaks, waveformPeaksR: peaksR } });
 
-      uploadAudioToSupabase(wavBlob, `${cropName}_${stamp}.wav`).then(supaUrl => {
-        if (supaUrl && supaUrl !== blobUrl)
-          dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId: cropPoolId, audioUrl: supaUrl } });
+      uploadAudioToSupabase(wavBlob, `${cropName}_${stamp}.wav`).then(({ publicUrl }) => {
+        if (publicUrl !== blobUrl)
+          dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId: cropPoolId, audioUrl: publicUrl } });
       }).catch(() => {});
 
       if (audioDirHandle) saveToAudioFolder(audioDirHandle, cropName, rendered).catch(() => {});
@@ -1629,9 +1626,9 @@ const ArrangeWindow = ({ onSeek }: { onSeek?: (t: number) => void }) => {
         }
 
         // Upload to Supabase in the background and swap in the permanent URL
-        uploadAudioToSupabase(file, file.name).then(supabaseUrl => {
-          if (supabaseUrl && supabaseUrl !== audioUrl)
-            dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId, audioUrl: supabaseUrl } });
+        uploadAudioToSupabase(file, file.name).then(({ publicUrl }) => {
+          if (publicUrl !== audioUrl)
+            dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId, audioUrl: publicUrl } });
         }).catch(() => {});
       } catch { /* skip undecodable */ }
     }

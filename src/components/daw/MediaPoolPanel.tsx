@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   FileAudio, FolderOpen, Play, Pause, Search,
-  Download, Trash2, Mic, Upload, Loader, Archive,
+  Download, Trash2, Mic, Upload, Loader, Archive, CheckCircle, XCircle,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -31,7 +31,7 @@ const formatDate = (date: Date): string => {
 };
 
 const MediaPoolPanel = () => {
-  const { state, dispatch, audioDirHandle } = useDaw();
+  const { state, dispatch, audioDirHandle, retryUploadRef, userRole } = useDaw();
   const { poolItems, regions } = state;
 
   const [search,         setSearch]         = useState('');
@@ -263,6 +263,19 @@ const MediaPoolPanel = () => {
     setSelectedIds(new Set());
   };
 
+  // ── Direct WAV download — fetches the Supabase public URL as-is ──────────────
+  const handleDownloadItem = async (e: React.MouseEvent, item: PoolItem) => {
+    e.stopPropagation();
+    try {
+      const resp = await fetch(item.audioUrl);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      saveAs(blob, `${item.name}.wav`);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  };
+
   // ── Pool item drag ────────────────────────────────────────────────
   const handleItemDragStart = (e: React.DragEvent, id: string) => {
     e.dataTransfer.setData('application/pool-item-id', id);
@@ -416,6 +429,16 @@ const MediaPoolPanel = () => {
                         : <FileAudio size={12} color={selectedIds.has(item.id) ? '#000' : '#00ffcc'} />
                       }
                       <span className="file-name-text">{item.name}</span>
+                      {/* Upload status badge */}
+                      {!item.isArchive && item.uploadStatus === 'uploading' && (
+                        <span title="Uploading…"><Loader size={10} className="spin" style={{ marginLeft: 4, color: '#00ffcc', flexShrink: 0 }} /></span>
+                      )}
+                      {!item.isArchive && item.uploadStatus === 'done' && (
+                        <span title="Uploaded"><CheckCircle size={10} style={{ marginLeft: 4, color: '#4ade80', flexShrink: 0 }} /></span>
+                      )}
+                      {!item.isArchive && item.uploadStatus === 'failed' && (
+                        <span title="Upload failed — use Retry in right-click menu"><XCircle size={10} style={{ marginLeft: 4, color: '#f87171', flexShrink: 0 }} /></span>
+                      )}
                     </div>
                     <div className="col-dur">{formatDuration(item.duration)}</div>
                     <div className="col-date">{formatDate(item.createdAt)}</div>
@@ -430,6 +453,16 @@ const MediaPoolPanel = () => {
                           {previewingId === item.id
                             ? <Pause size={10} fill="currentColor" />
                             : <Play  size={10} fill="currentColor" />}
+                        </button>
+                      )}
+                      {/* Direct WAV download — visible once the Supabase URL is available */}
+                      {!item.isArchive && item.uploadStatus === 'done' && (
+                        <button
+                          className="preview-btn"
+                          onClick={e => handleDownloadItem(e, item)}
+                          title="Download WAV"
+                        >
+                          <Download size={10} />
                         </button>
                       )}
                       <button
@@ -473,6 +506,16 @@ const MediaPoolPanel = () => {
             <button className="pool-ctx-item" onClick={e => handlePreview(e, item.id, item.audioUrl)}>
               {previewingId === item.id ? 'Pause Preview' : 'Preview'}
             </button>
+            {item.uploadStatus === 'done' && (
+              <button className="pool-ctx-item" onClick={e => { handleDownloadItem(e, item); setCtxMenu(null); }}>
+                Download WAV
+              </button>
+            )}
+            {item.uploadStatus === 'failed' && userRole === 'artist' && (
+              <button className="pool-ctx-item" onClick={() => { retryUploadRef.current?.(item.id); setCtxMenu(null); }}>
+                Retry Upload
+              </button>
+            )}
             <div className="pool-ctx-separator" />
             <button className="pool-ctx-item" onClick={e => { handleDelete(e, item); setCtxMenu(null); }}>
               Delete from Pool

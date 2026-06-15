@@ -116,7 +116,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     endCall, toggleMic, toggleVideo,
     rcRequested, rcActive,
     rcEngineerName, rcViewOnly,
-    requestRemoteControl, startScreenShare, stopRemoteControl,
+    requestRemoteControl, stopRemoteControl,
     respondToRcPermission,
     sendInputEvent,
     switchCallAudioBus, activeCallBus,

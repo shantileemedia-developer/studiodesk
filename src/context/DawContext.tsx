@@ -33,6 +33,7 @@ export interface Track {
   versions: TrackVersion[];
   activeVersionId: string;
   inputDeviceId?: string;  // 'default' or a MediaDeviceInfo.deviceId; undefined = use global pref
+  groupId?: number | null;  // 1-8, null/undefined = no group
 }
 
 export interface Region {

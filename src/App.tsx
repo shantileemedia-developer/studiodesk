@@ -59,14 +59,7 @@ function App() {
 
         if (sessionRole === 'artist') {
           getMyArtistCode(u.id).then(code => {
-            if (code) {
-              setArtistCode(code);
-              setRoomCode(prev => {
-                if (prev) return prev;
-                localStorage.setItem('sl_room', code.code);
-                return code.code;
-              });
-            }
+            if (code) setArtistCode(code);
           });
         }
       } else {
@@ -103,12 +96,7 @@ function App() {
 
     if (role === 'artist') {
       getMyArtistCode(activeSession.user.id).then(code => {
-        if (code) {
-          setArtistCode(code);
-          // Auto-join with artist code so they go straight to the DAW
-          setRoomCode(code.code);
-          localStorage.setItem('sl_room', code.code);
-        }
+        if (code) setArtistCode(code);
       });
     }
   };

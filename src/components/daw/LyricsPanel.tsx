@@ -80,16 +80,22 @@ const LyricsPanel = ({ onClose }: LyricsPanelProps) => {
 
   useEffect(() => { localStorage.setItem(TEXT_KEY, text); }, [text]);
 
-  // Persist pos, fontSize, align, expanded whenever they change
-  useEffect(() => { savePrefs(); }, [pos, fontSize, align, expanded, savePrefs]);
-
   // ── Set initial panel size from saved prefs (one-time on mount) ──────────────
+  // Must run BEFORE the savePrefs effect so the DOM reflects the restored size
+  // when savePrefs first reads el.offsetWidth/Height.
   useEffect(() => {
     const el = panelRef.current;
     if (!el) return;
     el.style.width  = `${saved.current.w}px`;
     el.style.height = `${saved.current.h}px`;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist pos, fontSize, align, expanded whenever they change (skip initial mount)
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    savePrefs();
+  }, [pos, fontSize, align, expanded, savePrefs]);
 
   // ── ResizeObserver — capture user-dragged size and persist ──────────────────
   useEffect(() => {

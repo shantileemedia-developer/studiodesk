@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { RemoteInputEvent } from '../../types/remote';
 import './RemoteControlOverlay.css';
 
@@ -225,34 +226,37 @@ const RemoteControlOverlay: React.FC<Props> = ({
 
   // ── Artist view ───────────────────────────────────────────────────────────
   return (
-    <div className={`rc-artist-overlay${viewOnly ? ' rc-mode-view' : ''}`}>
-      <div className={`rc-artist-bar${viewOnly ? ' rc-mode-view' : ''}`}>
-        <div className="rc-bar-left">
-          <div className="rc-dot" />
-          <span>
-            {viewOnly
-              ? 'Engineer is watching your session'
-              : 'Engineer has full control of your session (Press ESC to stop)'}
-          </span>
-        </div>
-        <div className="rc-bar-right">
-          <span className={`rc-mode-badge${viewOnly ? ' rc-mode-badge-view' : ' rc-mode-badge-full'}`}>
-            {viewOnly ? 'View Only' : 'Full Control'}
-          </span>
-          <button className="rc-revoke-btn" onClick={onRevoke}>Stop Sharing</button>
+    <>
+      <div className={`rc-artist-overlay${viewOnly ? ' rc-mode-view' : ''}`}>
+        <div className={`rc-artist-bar${viewOnly ? ' rc-mode-view' : ''}`}>
+          <div className="rc-bar-left">
+            <div className="rc-dot" />
+            <span>
+              {viewOnly
+                ? 'Engineer is watching your session'
+                : 'Engineer has full control of your session (Press ESC to stop)'}
+            </span>
+          </div>
+          <div className="rc-bar-right">
+            <span className={`rc-mode-badge${viewOnly ? ' rc-mode-badge-view' : ' rc-mode-badge-full'}`}>
+              {viewOnly ? 'View Only' : 'Full Control'}
+            </span>
+            <button className="rc-revoke-btn" onClick={onRevoke}>Stop Sharing</button>
+          </div>
         </div>
       </div>
-      {/* Engineer cursor — blue dot on artist's screen */}
-      {remoteCursorPos && (
+      {/* Engineer cursor — rendered at document.body level to escape all stacking contexts */}
+      {remoteCursorPos && createPortal(
         <div
           className="rc-remote-cursor rc-cursor-engineer"
           style={{
             left: `${remoteCursorPos.nx * 100}%`,
             top:  `${remoteCursorPos.ny * 100}%`,
           }}
-        />
+        />,
+        document.body,
       )}
-    </div>
+    </>
   );
 };
 

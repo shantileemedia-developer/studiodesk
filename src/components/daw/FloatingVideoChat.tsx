@@ -1,6 +1,12 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Video, Mic, MicOff, VideoOff, Minimize2, X, PhoneCall, MessageSquare, MonitorPlay, MonitorX } from 'lucide-react';
+import { Video, Mic, MicOff, VideoOff, Minimize2, X, PhoneCall, MessageSquare, MonitorPlay, MonitorX, Smile } from 'lucide-react';
+
+const EMOJIS: Record<string, string[]> = {
+  '😀': ['😀','😂','🤣','😍','🥹','😎','🤔','😅','🥺','😭','😤','🤯','🥳','😴','🤩','😬','🙄','😏','😒','🤗','😇','🫡','🤫','😶','🤐'],
+  '👍': ['👍','👎','👌','🤌','✌️','🤞','🤟','🤘','👏','🙌','🤜','🤛','💪','🙏','🫶','❤️','🔥','💯','✅','🎉','🚀','💀','👀','🫠','💅'],
+  '🎵': ['🎵','🎶','🎸','🥁','🎹','🎤','🎧','🎼','🎷','🎺','🎻','🪗','🎙️','📻','🔊','🔇','🎚️','🎛️','💿','🎬'],
+};
 import { useWebRTC } from '../../hooks/useWebRTC';
 import type { RemoteInputEvent } from '../../types/remote';
 import './FloatingVideoChat.css';
@@ -81,11 +87,92 @@ function useRingtone(isIncoming: boolean, isOutgoing: boolean) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/* ── Video Grid — memoized so typing in chat never re-renders video elements ── */
+interface VideoGridProps {
+  callActive: boolean;
+  remoteStream: MediaStream | null;
+  localStream: MediaStream | null;
+  previewStream: MediaStream | null;
+  isCalling: boolean;
+  showLocalCam: boolean;
+  setShowLocalCam: (v: boolean) => void;
+  userRole: 'artist' | 'engineer';
+}
+
+const VideoGrid: React.FC<VideoGridProps> = memo(({
+  callActive, remoteStream, localStream, previewStream, isCalling, showLocalCam, setShowLocalCam, userRole,
+}) => {
+  const remoteVidRef  = useRef<HTMLVideoElement>(null);
+  const localVidRef   = useRef<HTMLVideoElement>(null);
+  const previewVidRef = useRef<HTMLVideoElement>(null);
+
+  // Sync srcObject synchronously after DOM update so the video never misses a stream,
+  // even when WebRTC adds tracks to an existing MediaStream object (same reference).
+  useEffect(() => {
+    if (remoteVidRef.current)  remoteVidRef.current.srcObject  = remoteStream  ?? null;
+  }, [remoteStream]);
+
+  useEffect(() => {
+    if (localVidRef.current)   localVidRef.current.srcObject   = localStream   ?? null;
+  }, [localStream]);
+
+  useEffect(() => {
+    if (previewVidRef.current) previewVidRef.current.srcObject = previewStream ?? null;
+  }, [previewStream]);
+
+  return (
+    <div className="video-grid">
+      <div className="video-feed remote">
+        {callActive ? (
+          remoteStream ? (
+            <video autoPlay playsInline className="video-el" ref={remoteVidRef} />
+          ) : (
+            <div className="video-placeholder">{isCalling ? 'Ringing…' : 'Connecting…'}</div>
+          )
+        ) : (
+          previewStream ? (
+            <video autoPlay playsInline muted className="video-el" ref={previewVidRef} />
+          ) : (
+            <div className="video-placeholder">{isCalling ? 'Calling…' : 'Camera Preview'}</div>
+          )
+        )}
+        <div className="feed-name">
+          {callActive ? (userRole === 'engineer' ? 'Artist' : 'Engineer') : 'You'}
+        </div>
+      </div>
+
+      {callActive && showLocalCam && (
+        <div className="video-feed local">
+          {localStream ? (
+            <video autoPlay playsInline muted className="video-el" ref={localVidRef} />
+          ) : (
+            <div className="video-placeholder" style={{ fontSize: 10 }}>Your Cam</div>
+          )}
+          <div className="feed-name">You</div>
+          <button className="pip-hide-btn" onClick={() => setShowLocalCam(false)} title="Hide your camera">
+            <VideoOff size={9} />
+          </button>
+        </div>
+      )}
+
+      {callActive && !showLocalCam && (
+        <button className="pip-show-btn" onClick={() => setShowLocalCam(true)} title="Show your camera">
+          <Video size={11} />
+        </button>
+      )}
+    </div>
+  );
+});
+
 const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   userRole, userId, roomCode, onInputEvent, onRcStateChange, masterStreamRef, audioCtxRef,
 }) => {
   const [isMinimized, setIsMinimized] = useState(true);
   const [showChat, setShowChat] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiTab, setEmojiTab] = useState<string>('😀');
+  const [mounted, setMounted] = useState(false);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 320, height: 0 });
   const [monitorVolume, setMonitorVolume] = useState(0.7);
@@ -97,6 +184,8 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   const dragRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; initW: number; initH: number; el: HTMLElement } | null>(null);
   const widgetRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
 
   const initAudioCtx = () => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
@@ -138,6 +227,35 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   const localVideoRef  = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const chatScrollRef  = useRef<HTMLDivElement>(null);
+
+  // Ensure portal slot is found after TransportPanel commits to DOM
+  useEffect(() => { setMounted(true); }, []);
+
+  // Close emoji picker on outside click
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showEmojiPicker]);
+
+  const insertEmoji = useCallback((emoji: string) => {
+    const el = chatInputRef.current;
+    if (!el) { setChatInput(v => v + emoji); return; }
+    const start = el.selectionStart ?? chatInput.length;
+    const end = el.selectionEnd ?? chatInput.length;
+    const next = chatInput.slice(0, start) + emoji + chatInput.slice(end);
+    setChatInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, [chatInput]);
 
   // Assign streams whenever they change (refs are always in the DOM)
   useEffect(() => {
@@ -357,7 +475,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
 
   // ── Minimized pill — portalled into transport bar ─────────────────────────
   if (isMinimized) {
-    const slot = document.getElementById('transport-chat-slot');
+    const slot = mounted ? document.getElementById('transport-chat-slot') : null;
     const pillStatus = incomingCall ? 'ringing' : callActive && isConnected ? 'connected' : callActive ? 'connecting' : 'idle';
     return (
       <>
@@ -414,56 +532,17 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
           </div>
         </div>
 
-        {/* Video grid — main feed + PiP local cam */}
-        <div className="video-grid">
-          {/* Main: remote during call, self-preview before */}
-          <div className="video-feed remote">
-            {callActive ? (
-              remoteStream ? (
-                <video autoPlay playsInline className="video-el"
-                  ref={el => { if (el && remoteStream) el.srcObject = remoteStream; }}
-                />
-              ) : (
-                <div className="video-placeholder">{isCalling ? 'Ringing…' : 'Connecting…'}</div>
-              )
-            ) : (
-              previewStream ? (
-                <video autoPlay playsInline muted className="video-el"
-                  ref={el => { if (el && previewStream) el.srcObject = previewStream; }}
-                />
-              ) : (
-                <div className="video-placeholder">{isCalling ? 'Calling…' : 'Camera Preview'}</div>
-              )
-            )}
-            <div className="feed-name">
-              {callActive ? (userRole === 'engineer' ? 'Artist' : 'Engineer') : 'You'}
-            </div>
-          </div>
-
-          {/* PiP: your cam during active call */}
-          {callActive && showLocalCam && (
-            <div className="video-feed local">
-              {localStream ? (
-                <video autoPlay playsInline muted className="video-el"
-                  ref={el => { if (el && localStream) el.srcObject = localStream; }}
-                />
-              ) : (
-                <div className="video-placeholder" style={{ fontSize: 10 }}>Your Cam</div>
-              )}
-              <div className="feed-name">You</div>
-              <button className="pip-hide-btn" onClick={() => setShowLocalCam(false)} title="Hide your camera">
-                <VideoOff size={9} />
-              </button>
-            </div>
-          )}
-
-          {/* Restore PiP when hidden */}
-          {callActive && !showLocalCam && (
-            <button className="pip-show-btn" onClick={() => setShowLocalCam(true)} title="Show your camera">
-              <Video size={11} />
-            </button>
-          )}
-        </div>
+        {/* Video grid — memoized, isolated from chat input state */}
+        <VideoGrid
+          callActive={callActive}
+          remoteStream={remoteStream}
+          localStream={localStream}
+          previewStream={previewStream}
+          isCalling={isCalling}
+          showLocalCam={showLocalCam}
+          setShowLocalCam={setShowLocalCam}
+          userRole={userRole}
+        />
 
         {showChat && (
           <div className="chat-pane">
@@ -475,15 +554,45 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
                 </div>
               ))}
             </div>
-            <div className="chat-input-row">
+            <div className="chat-input-row" style={{ position: 'relative' }}>
+              {showEmojiPicker && (
+                <div className="emoji-picker" ref={emojiPickerRef}>
+                  <div className="emoji-tabs">
+                    {Object.keys(EMOJIS).map(tab => (
+                      <button
+                        key={tab}
+                        className={`emoji-tab ${emojiTab === tab ? 'active' : ''}`}
+                        onClick={() => setEmojiTab(tab)}
+                      >{tab}</button>
+                    ))}
+                  </div>
+                  <div className="emoji-grid">
+                    {(EMOJIS[emojiTab] ?? []).map(e => (
+                      <button key={e} className="emoji-btn" onClick={() => insertEmoji(e)}>{e}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button
+                className={`emoji-toggle-btn ${showEmojiPicker ? 'active' : ''}`}
+                onClick={() => setShowEmojiPicker(v => !v)}
+                title="Emoji"
+                type="button"
+              >
+                <Smile size={14} />
+              </button>
               <input
+                ref={chatInputRef}
                 type="text"
                 className="chat-input"
-                placeholder="Type a message..."
+                placeholder="Type a message…"
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                    sendMessage(e.currentTarget.value.trim());
-                    e.currentTarget.value = '';
+                  if (e.key === 'Enter' && chatInput.trim()) {
+                    sendMessage(chatInput.trim());
+                    setChatInput('');
+                    setShowEmojiPicker(false);
                   }
                 }}
               />

@@ -50,6 +50,12 @@ const MIXER_PALETTE = [
   '#ffffff','#d0d0d0','#808080','#1a1a1a',
 ];
 
+/* ── Group colors ────────────────────────────────────────────────────────────── */
+const GROUP_COLORS: Record<number, string> = {
+  1: '#ff4d4d', 2: '#ff9933', 3: '#ffd700', 4: '#66ff66',
+  5: '#00ffcc', 6: '#4db8ff', 7: '#9955ff', 8: '#ff4499',
+};
+
 /* ── Scale marks ─────────────────────────────────────────────────────────────── */
 const DB_SCALE_MARKS = [
   { db: 12,  pct: 2    },
@@ -359,31 +365,123 @@ const PanKnob: React.FC<{ pan: number; onChange: (v: number) => void }> = ({ pan
   );
 };
 
+/* ── Group Selector ──────────────────────────────────────────────────────────── */
+const GroupSelector: React.FC<{ groupId: number | null | undefined; onChange: (g: number | null) => void }> = ({ groupId, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const btnRef  = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node) &&
+          btnRef.current  && !btnRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    const rect = btnRef.current!.getBoundingClientRect();
+    setPos({ x: rect.left, y: rect.bottom + 4 });
+    setOpen(true);
+  };
+
+  const color = groupId ? GROUP_COLORS[groupId] : null;
+
+  return (
+    <>
+      <div
+        ref={btnRef}
+        className={`mch-group-select${groupId ? ' assigned' : ''}`}
+        style={color ? { color, borderColor: `${color}55`, background: `${color}18` } : undefined}
+        onClick={toggle}
+        title={groupId ? `Group ${groupId} — click to change` : 'Assign to a group'}
+      >
+        {groupId ? `GRP ${groupId}` : 'No Group'}
+      </div>
+
+      {open && ReactDOM.createPortal(
+        <div
+          ref={menuRef}
+          className="group-menu"
+          style={{ position: 'fixed', top: pos.y, left: pos.x }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div
+            className={`group-menu-item${!groupId ? ' active' : ''}`}
+            onClick={() => { onChange(null); setOpen(false); }}
+          >
+            <span className="group-menu-dot" style={{ background: '#444' }} />
+            No Group
+          </div>
+          {([1,2,3,4,5,6,7,8] as const).map(n => (
+            <div
+              key={n}
+              className={`group-menu-item${groupId === n ? ' active' : ''}`}
+              onClick={() => { onChange(n); setOpen(false); }}
+            >
+              <span className="group-menu-dot" style={{ background: GROUP_COLORS[n] }} />
+              Group {n}
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+};
+
 /* ── Channel Strip ───────────────────────────────────────────────────────────── */
 interface ChannelStripProps {
   track: Track;
+  allTracks: Track[];
   isSelected: boolean;
   onClick: () => void;
 }
 
-const ChannelStrip: React.FC<ChannelStripProps> = ({ track, isSelected, onClick }) => {
+const ChannelStrip: React.FC<ChannelStripProps> = ({ track, allTracks, isSelected, onClick }) => {
   const { dispatch } = useDaw();
 
-  const setVolume = (v: number) =>
+  // Returns all tracks in the same group (excluding this track)
+  const groupSiblings = (gid: number | null | undefined): Track[] =>
+    gid ? allTracks.filter(t => t.id !== track.id && t.groupId === gid) : [];
+
+  const setVolume = (v: number) => {
     dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { volume: v } } });
+    // Propagate to group — match the same absolute volume
+    groupSiblings(track.groupId).forEach(t =>
+      dispatch({ type: 'UPDATE_TRACK', payload: { id: t.id, updates: { volume: v } } })
+    );
+  };
   const setPan = (p: number) =>
     dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { pan: p } } });
   const setName = (n: string) =>
     dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { name: n } } });
+  const setGroup = (g: number | null) =>
+    dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { groupId: g } } });
 
   const sp = (e: React.MouseEvent) => e.stopPropagation();
   const toggleMute = (e: React.MouseEvent) => {
     e.stopPropagation();
-    dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { isMuted: !track.isMuted } } });
+    const next = !track.isMuted;
+    dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { isMuted: next } } });
+    groupSiblings(track.groupId).forEach(t =>
+      dispatch({ type: 'UPDATE_TRACK', payload: { id: t.id, updates: { isMuted: next } } })
+    );
   };
   const toggleSolo = (e: React.MouseEvent) => {
     e.stopPropagation();
-    dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { isSolo: !track.isSolo } } });
+    const next = !track.isSolo;
+    dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { isSolo: next } } });
+    groupSiblings(track.groupId).forEach(t =>
+      dispatch({ type: 'UPDATE_TRACK', payload: { id: t.id, updates: { isSolo: next } } })
+    );
   };
   const toggleArm = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -400,8 +498,8 @@ const ChannelStrip: React.FC<ChannelStripProps> = ({ track, isSelected, onClick 
   return (
     <div className="mixer-ch" style={{ background: bg, border }} onClick={onClick}>
       {/* Group */}
-      <div className="mch-group-bar">
-        <div className="mch-group-select" onClick={sp}>No Group</div>
+      <div className="mch-group-bar" onClick={sp}>
+        <GroupSelector groupId={track.groupId} onChange={setGroup} />
       </div>
 
       {/* LED */}
@@ -658,6 +756,7 @@ const MixerPanel: React.FC = () => {
             <ChannelStrip
               key={track.id}
               track={track}
+              allTracks={state.tracks}
               isSelected={state.selectedTrackId === track.id}
               onClick={() => dispatch({ type: 'SELECT_TRACK', payload: track.id })}
             />

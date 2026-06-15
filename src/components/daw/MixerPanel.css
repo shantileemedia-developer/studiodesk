@@ -118,11 +118,60 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  user-select: none;
+  box-sizing: border-box;
 }
 .mch-group-select::after {
-  content: 'â–¾';
+  content: '▾';
   font-size: 8px;
   color: #666;
+  flex-shrink: 0;
+}
+.mch-group-select:hover {
+  border-color: #666;
+  color: #aaa;
+}
+.mch-group-select.assigned {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+/* ── Group dropdown menu (portalled to body) ── */
+.group-menu {
+  z-index: 9999;
+  background: #1c1d22;
+  border: 1px solid #333;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+  min-width: 120px;
+  overflow: hidden;
+  padding: 3px;
+}
+.group-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #aaa;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s, color 0.1s;
+}
+.group-menu-item:hover {
+  background: rgba(255,255,255,0.07);
+  color: #fff;
+}
+.group-menu-item.active {
+  color: #fff;
+  background: rgba(255,255,255,0.1);
+}
+.group-menu-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* â”€â”€ LED dot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */

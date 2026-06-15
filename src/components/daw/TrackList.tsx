@@ -36,38 +36,37 @@ const TrackMiniMeter: React.FC<{ trackId: string }> = ({ trackId }) => {
       const rawL = mv?.L ?? -90;
       const rawR = mv?.R ?? -90;
 
-      // Smooth
+      // Smooth (fast attack, slow decay)
       displayL.current = rawL > displayL.current ? 0.5 * displayL.current + 0.5 * rawL : 0.96 * displayL.current + 0.04 * rawL;
       displayR.current = rawR > displayR.current ? 0.5 * displayR.current + 0.5 * rawR : 0.96 * displayR.current + 0.04 * rawR;
 
-      const dbToW = (db: number) => Math.max(0, (db - TRACK_METER_FLOOR) / (0 - TRACK_METER_FLOOR) * W);
+      // Use max of L/R for a single combined bar that fills the slider track
+      const db = Math.max(displayL.current, displayR.current);
+      const dbToW = (v: number) => Math.max(0, (v - TRACK_METER_FLOOR) / (0 - TRACK_METER_FLOOR) * W);
+      const fillW = dbToW(db);
 
-      ctx2d.fillStyle = '#0a0c10';
+      // Background — matches the slider track color
+      ctx2d.fillStyle = '#1a1b1e';
       ctx2d.fillRect(0, 0, W, H);
 
-      const halfH = H / 2;
-      const wL = dbToW(displayL.current);
-      const wR = dbToW(displayR.current);
-
-      // L bar
-      ctx2d.fillStyle = meterCol(displayL.current);
-      ctx2d.fillRect(0, 0, wL, halfH - 1);
-      // R bar
-      ctx2d.fillStyle = meterCol(displayR.current);
-      ctx2d.fillRect(0, halfH + 1, wR, halfH - 1);
-
-      // Peak hold
-      const peakL = mv?.peakL ?? -90;
-      const peakR = mv?.peakR ?? -90;
-      if (peakL > TRACK_METER_FLOOR + 2) {
-        const px = dbToW(peakL);
-        ctx2d.fillStyle = meterCol(peakL);
-        ctx2d.fillRect(Math.min(W - 1, px), 0, 2, halfH - 1);
+      // Meter fill with color gradient zones
+      if (fillW > 0) {
+        const grad = ctx2d.createLinearGradient(0, 0, W, 0);
+        grad.addColorStop(0,    '#22cc44');
+        grad.addColorStop(0.55, '#22cc44');
+        grad.addColorStop(0.72, '#cccc00');
+        grad.addColorStop(0.84, '#ff7700');
+        grad.addColorStop(1,    '#ff2200');
+        ctx2d.fillStyle = grad;
+        ctx2d.fillRect(0, 0, fillW, H);
       }
-      if (peakR > TRACK_METER_FLOOR + 2) {
-        const px = dbToW(peakR);
-        ctx2d.fillStyle = meterCol(peakR);
-        ctx2d.fillRect(Math.min(W - 1, px), halfH + 1, 2, halfH - 1);
+
+      // Peak hold tick
+      const peak = Math.max(mv?.peakL ?? -90, mv?.peakR ?? -90);
+      if (peak > TRACK_METER_FLOOR + 2) {
+        const px = Math.min(W - 2, dbToW(peak));
+        ctx2d.fillStyle = meterCol(peak);
+        ctx2d.fillRect(px, 0, 2, H);
       }
 
       raf = requestAnimationFrame(draw);
@@ -76,7 +75,7 @@ const TrackMiniMeter: React.FC<{ trackId: string }> = ({ trackId }) => {
     return () => cancelAnimationFrame(raf);
   }, [trackId, meterValuesRef]);
 
-  return <canvas ref={canvasRef} width={120} height={10} className="track-mini-meter" />;
+  return <canvas ref={canvasRef} width={120} height={6} className="track-mini-meter" />;
 };
 
 const TrackList = () => {
@@ -375,17 +374,19 @@ const TrackList = () => {
                   </div>
 
                   <div className="track-volume-row" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1.5"
-                      step="0.01"
-                      value={track.volume}
-                      onChange={e => dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { volume: parseFloat(e.target.value) } } })}
-                      className="track-volume-slider"
-                      title={`Volume: ${Math.round(track.volume * 100)}%`}
-                    />
-                    <TrackMiniMeter trackId={track.id} />
+                    <div className="track-fader-with-meter">
+                      <TrackMiniMeter trackId={track.id} />
+                      <input
+                        type="range"
+                        min="0"
+                        max="1.5"
+                        step="0.01"
+                        value={track.volume}
+                        onChange={e => dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { volume: parseFloat(e.target.value) } } })}
+                        className="track-volume-slider"
+                        title={`Volume: ${Math.round(track.volume * 100)}%`}
+                      />
+                    </div>
                   </div>
 
                   {/* Version dropdown — stereo tracks only */}

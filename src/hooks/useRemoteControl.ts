@@ -116,6 +116,13 @@ export const useRemoteControlReplay = (isActive: boolean) => {
     Element.prototype.setPointerCapture     = function () {};
     Element.prototype.releasePointerCapture = function () {};
 
+    // Map pointer event types to their mouse equivalents
+    const MOUSE_MAP: Record<string, string> = {
+      pointerdown: 'mousedown',
+      pointermove: 'mousemove',
+      pointerup:   'mouseup',
+    };
+
     try {
       const a = pe as any;
       if (pe.type === 'wheel') {
@@ -132,12 +139,22 @@ export const useRemoteControlReplay = (isActive: boolean) => {
           button: a.button,
         }));
       } else {
+        // Dispatch PointerEvent (for onPointerDown handlers like the timeline ruler)
         target.dispatchEvent(new PointerEvent(pe.type, {
           bubbles: true, cancelable: true,
           clientX: cssX, clientY: cssY,
           button: a.button, buttons: a.buttons,
           pointerId: 999, isPrimary: true,
         }));
+        // Also dispatch MouseEvent (for onMouseDown handlers and window/document listeners)
+        const mouseType = MOUSE_MAP[pe.type];
+        if (mouseType) {
+          target.dispatchEvent(new MouseEvent(mouseType, {
+            bubbles: true, cancelable: true,
+            clientX: cssX, clientY: cssY,
+            button: a.button, buttons: a.buttons,
+          }));
+        }
       }
     } finally {
       Element.prototype.setPointerCapture     = origSet;

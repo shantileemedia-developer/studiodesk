@@ -81,5 +81,5 @@
   pointer-events: none;
   z-index: 99998;
   transform: translate(-50%, -50%);
-  transition: left 0.04s linear, top 0.04s linear;
+  will-change: left, top;
 }

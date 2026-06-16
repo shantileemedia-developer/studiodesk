@@ -5,7 +5,7 @@ import './InspectorPanel.css';
 
 const gainToDb = (g: number) => g <= 0 ? '-∞' : `${(20 * Math.log10(g)).toFixed(1)} dB`;
 
-const InspectorPanel = () => {
+const InspectorPanel = ({ onClose }: { onClose?: () => void }) => {
   const { state, dispatch } = useDaw();
   const track = state.tracks.find(t => t.id === state.selectedTrackId);
   const selectedRegion = state.regions.find(r => r.id === state.selectedRegionId);
@@ -29,7 +29,12 @@ const InspectorPanel = () => {
   if (!track) {
     return (
       <div className="daw-panel inspector-panel">
-        <div className="daw-panel-header">INSPECTOR</div>
+        <div className="daw-panel-header">
+          INSPECTOR
+          {onClose && (
+            <button className="panel-close-btn" onClick={onClose} title="Close Inspector">×</button>
+          )}
+        </div>
         <div className="inspector-content" style={{ padding: 20, color: '#666', textAlign: 'center' }}>
           No track selected
         </div>

@@ -320,13 +320,15 @@ ipcMain.handle('rc:inject-input', async (_e, event: any) => {
   }
 });
 
-// rc:get-screen-size — primary display resolution for coordinate mapping
+// rc:get-screen-size — primary display logical bounds (includes x/y virtual-screen offset)
 ipcMain.handle('rc:get-screen-size', () => {
-  const { width, height } = electronScreen.getPrimaryDisplay().bounds;
-  return { width, height };
+  const { x, y, width, height } = electronScreen.getPrimaryDisplay().bounds;
+  return { x, y, width, height };
 });
 
-// rc:get-sources — enumerate desktop / window sources for full-desktop share
+// rc:get-sources — enumerate desktop capture sources for full-desktop share.
+// Returns each source with its thumbnail size so the renderer can filter out
+// combined virtual-desktop sources (too wide = multiple monitors in one image).
 ipcMain.handle('rc:get-sources', async () => {
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
@@ -336,6 +338,7 @@ ipcMain.handle('rc:get-sources', async () => {
     id:               s.id,
     name:             s.name,
     thumbnailDataUrl: s.thumbnail.toDataURL(),
+    thumbnailSize:    s.thumbnail.getSize(),   // { width, height } of the actual capture
   }));
 });
 

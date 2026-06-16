@@ -22,6 +22,7 @@ interface Menu {
 
 interface MenuBarProps {
   onOpenAudioPrefs?: () => void;
+  onLeaveSession?: () => void;
   onCloseProject?: () => void;
   onToggleLyrics?: () => void;
   isAdmin?: boolean;
@@ -63,7 +64,7 @@ const SHORTCUT_LIST = [
 ];
 
 const MenuBar: React.FC<MenuBarProps> = ({
-  onOpenAudioPrefs, onCloseProject, onToggleLyrics, isAdmin, onOpenAdmin,
+  onOpenAudioPrefs, onLeaveSession, onCloseProject, onToggleLyrics, isAdmin, onOpenAdmin,
 }) => {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [localToast, setLocalToast] = useState<string | null>(null);
@@ -459,6 +460,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { label: 'Export Stems…',              onClick: handleExportStems },
         { label: 'Consolidate Track…',         onClick: handleConsolidateTrack },
         { separator: true, label: '' },
+        { label: 'Leave Session', onClick: onLeaveSession },
         { label: 'Sign Out', onClick: async () => { await supabase.auth.signOut(); window.location.reload(); } },
         { label: 'Quit', shortcut: 'Ctrl+Q', onClick: () => { if (confirm('Quit StudioDESK?')) window.close(); } },
       ],

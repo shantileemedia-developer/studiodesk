@@ -1853,12 +1853,12 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
         onDrop={handleDrop}
         style={{ cursor: TOOL_CURSORS[activeTool] }}
       >
-        <div style={{ width: totalWidth, position: 'relative', minHeight: totalTracksHeight }}>
+        <div style={{ width: totalWidth, position: 'relative', minHeight: '100%' }}>
           <div ref={playheadLineRef} className="playhead-line" style={{ left: 0 }} />
           {snapGuide && (
             <div
               className={`snap-guide snap-guide-${snapGuide.type}`}
-              style={{ left: snapGuide.time * pxPerSec, height: totalTracksHeight }}
+              style={{ left: snapGuide.time * pxPerSec, height: '100%' }}
             />
           )}
           <div className="grid-background" style={gridStyle} />
@@ -1869,14 +1869,14 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
             style={{
               left:   projectEnd * pxPerSec,
               width:  (totalDuration - projectEnd) * pxPerSec,
-              height: totalTracksHeight,
+              height: '100%',
             }}
           />
 
           {/* Project End marker — draggable vertical line */}
           <div
             className="project-end-marker"
-            style={{ left: projectEnd * pxPerSec, height: totalTracksHeight }}
+            style={{ left: projectEnd * pxPerSec, height: '100%' }}
             onPointerDown={(e) => {
               e.stopPropagation();
               e.currentTarget.setPointerCapture(e.pointerId);
@@ -1896,7 +1896,7 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
 
           {/* Range selection box */}
           {rangeBox && (
-            <div className="range-selection-box" style={{ left: rangeBox.left, width: rangeBox.width, height: totalTracksHeight }} />
+            <div className="range-selection-box" style={{ left: rangeBox.left, width: rangeBox.width, height: '100%' }} />
           )}
 
           {/* Lasso selection box */}

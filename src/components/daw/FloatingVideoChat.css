@@ -939,7 +939,74 @@
   text-align: right;
 }
 
-/* ── Desktop Control screen stream ───────────────────────────────── */
+/* ── Desktop Control full-screen overlay (engineer side) ──────────── */
+.desktop-control-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: #000;
+  cursor: crosshair; /* clear visual cue that the engineer is in control mode */
+}
+
+.desktop-control-video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* fill = no letterboxing → mouse coords map correctly to artist's screen */
+  object-fit: fill;
+}
+
+.desktop-control-hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 8px 16px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, transparent 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none; /* mouse events pass through to video for coordinate capture */
+  z-index: 9001;
+}
+
+.desktop-control-hud-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+.desktop-hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4444;
+  animation: pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.desktop-control-exit-btn {
+  pointer-events: all; /* re-enable clicks on just this button */
+  background: rgba(255, 68, 68, 0.85);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer !important; /* override the crosshair cursor from parent */
+  transition: background 0.15s;
+}
+
+.desktop-control-exit-btn:hover {
+  background: rgba(255, 68, 68, 1);
+}
+
+/* ── Desktop Control screen stream (legacy, kept for reference) ───── */
 .desktop-stream-container {
   position: relative;
   width: 100%;

@@ -22,17 +22,20 @@ declare global {
        * Get the primary display's pixel dimensions so we can map
        * normalized (0-1) coordinates → real screen pixels.
        */
-      getScreenSize: () => Promise<{ width: number; height: number }>;
+      /** x, y are the display's virtual-screen offsets (non-zero on multi-monitor
+       *  setups where the primary display is not the leftmost one). */
+      getScreenSize: () => Promise<{ x: number; y: number; width: number; height: number }>;
 
       /**
-       * Get available desktop capture sources (fullscreen, windows) via
-       * Electron's desktopCapturer API. Returns an array of sources with
-       * id, name, and thumbnailDataUrl.
+       * Get available desktop capture sources via Electron's desktopCapturer.
+       * thumbnailSize lets the renderer filter out combined virtual-desktop
+       * sources (those are wider than a single monitor aspect ratio).
        */
       getScreenSources: () => Promise<Array<{
         id: string;
         name: string;
         thumbnailDataUrl: string;
+        thumbnailSize: { width: number; height: number };
       }>>;
     };
   }

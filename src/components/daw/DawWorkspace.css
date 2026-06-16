@@ -58,6 +58,24 @@
   justify-content: space-between;
 }
 
+/* Panel close button — appears in mixer and inspector headers */
+.panel-close-btn {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+  flex-shrink: 0;
+}
+.panel-close-btn:hover {
+  color: #fff;
+  background: rgba(255, 80, 80, 0.25);
+}
+
 /* Custom Scrollbars for DAW */
 .daw-workspace *::-webkit-scrollbar {
   width: 10px;

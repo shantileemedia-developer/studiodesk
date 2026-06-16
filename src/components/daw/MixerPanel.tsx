@@ -722,7 +722,7 @@ const MasterStrip: React.FC<{
 };
 
 /* ── Mixer Panel ─────────────────────────────────────────────────────────────── */
-const MixerPanel: React.FC = () => {
+const MixerPanel: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const { state, dispatch, masterGainRef } = useDaw();
   const [masterVol,   setMasterVol]   = useState(0.8);
   const [masterPan,   setMasterPan]   = useState(0);
@@ -742,6 +742,9 @@ const MixerPanel: React.FC = () => {
           <span className="mixer-header-key">F3</span> MIXER
         </span>
         <span className="mixer-header-info">{state.tracks.length} tracks · Stereo Out</span>
+        {onClose && (
+          <button className="panel-close-btn" onClick={onClose} title="Close Mixer (F3)">×</button>
+        )}
       </div>
 
       <div className="mixer-body">

@@ -113,7 +113,7 @@ const VideoGrid: React.FC<VideoGridProps> = memo(({
 
   useEffect(() => {
     if (localVidRef.current)   localVidRef.current.srcObject   = localStream   ?? null;
-  }, [localStream]);
+  }, [localStream, showLocalCam]);
 
   useEffect(() => {
     if (previewVidRef.current) previewVidRef.current.srcObject = previewStream ?? null;
@@ -163,17 +163,34 @@ const VideoGrid: React.FC<VideoGridProps> = memo(({
   );
 });
 
-// ── Desktop Control video feed (artist's captured screen → engineer) ─────────
-const DesktopStreamView: React.FC<{ stream: MediaStream }> = ({ stream }) => {
+// ── Desktop Control: full-screen overlay on the engineer's side ──────────────
+// The video fills the entire window so mouse coords (normalized by window.innerWidth/Height
+// in RemoteControlOverlay) map 1:1 to the artist's screen coordinates fed into nut-js.
+// object-fit: fill eliminates letterboxing so there are no dead zones at the edges.
+interface DesktopControlFullscreenProps {
+  stream: MediaStream;
+  onExit: () => void;
+}
+const DesktopControlFullscreen: React.FC<DesktopControlFullscreenProps> = ({ stream, onExit }) => {
   const vidRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     if (vidRef.current) vidRef.current.srcObject = stream;
   }, [stream]);
-  return (
-    <div className="desktop-stream-container">
-      <div className="desktop-stream-label">Desktop Control</div>
-      <video ref={vidRef} autoPlay playsInline muted className="desktop-stream-video" />
-    </div>
+  return createPortal(
+    <div className="desktop-control-fullscreen">
+      <video ref={vidRef} autoPlay playsInline muted className="desktop-control-video" />
+      {/* data-desktop-hud: RemoteControlOverlay excludes events on these elements */}
+      <div className="desktop-control-hud" data-desktop-hud="">
+        <div className="desktop-control-hud-label">
+          <span className="desktop-hud-dot" />
+          Desktop Control Active
+        </div>
+        <button className="desktop-control-exit-btn" onClick={onExit}>
+          Exit Desktop Control
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 };
 
@@ -431,7 +448,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
             <X size={20} />
             <span style={{ marginLeft: 6, fontSize: 12 }}>Decline</span>
           </button>
-          <button className="control-btn start-call" onClick={acceptCall} title="Accept">
+          <button className="control-btn start-call" onClick={() => { acceptCall(); setIsMinimized(false); }} title="Accept">
             <PhoneCall size={20} />
             <span style={{ marginLeft: 6, fontSize: 12 }}>Accept</span>
           </button>
@@ -554,9 +571,12 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
           userRole={userRole}
         />
 
-        {/* Desktop Control stream — shown to engineer when artist shares screen */}
-        {userRole === 'engineer' && remoteDesktopStream && (
-          <DesktopStreamView stream={remoteDesktopStream} />
+        {/* Desktop Control full-screen overlay — rendered as a portal when active */}
+        {userRole === 'engineer' && rcActive && remoteDesktopStream && (
+          <DesktopControlFullscreen
+            stream={remoteDesktopStream}
+            onExit={stopRemoteControl}
+          />
         )}
 
         {showChat && (

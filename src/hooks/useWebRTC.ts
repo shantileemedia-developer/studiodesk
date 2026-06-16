@@ -111,6 +111,8 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
   const callActiveRef = useRef(false);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const onInputEventRef = useRef(onInputEvent);
+  // Stable ref to teardownCall so closures (signal channel, onconnectionstatechange) can call it
+  const teardownCallRef = useRef<() => void>(() => {});
 
   // ── RC-only peer connection refs (independent of the video call) ──────────
   const rcPcRef = useRef<RTCPeerConnection | null>(null);
@@ -206,8 +208,14 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
             pcRef.current.restartIce();
           }
         }, 5000);
+      } else if (s === 'failed') {
+        // ICE failed (network drop) — unrecoverable, reset both sides
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        if (callActiveRef.current) teardownCallRef.current();
       } else if (s === 'closed') {
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        // Peer closed the PC (race condition / hung up before our hangup arrived)
+        if (callActiveRef.current) teardownCallRef.current();
       }
     };
 
@@ -273,6 +281,10 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     channel.on('broadcast', { event: 'accept' }, () => {
       setIsCalling(false);
       setTimeout(() => startCallInternal(), 500);
+    });
+    // Peer hung up — reset immediately (no ICE timeout freeze)
+    channel.on('broadcast', { event: 'hangup' }, () => {
+      teardownCallRef.current();
     });
     channel.on('broadcast', { event: 'chat' }, ({ payload }) => {
       setMessages(prev => [...prev, payload.message]);
@@ -521,7 +533,8 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     }
   }, [roomCode, userId, isInitiator, createPeerConnection]);
 
-  const endCall = useCallback(() => {
+  // Internal teardown — no broadcast. Called by endCall, hangup listener, and connection failure handler.
+  const teardownCall = useCallback(() => {
     releaseCallAudio();
     if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
     if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
@@ -531,7 +544,16 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     setIsConnected(false); setCallActive(false); callActiveRef.current = false;
     setIsCalling(false); setIncomingCall(false);
     setIsScreenSharing(false);
-  }, []);
+  }, [releaseCallAudio]);
+
+  // Keep ref current so signal-channel and onconnectionstatechange closures can call it
+  useEffect(() => { teardownCallRef.current = teardownCall; }, [teardownCall]);
+
+  const endCall = useCallback(() => {
+    // Signal peer before tearing down so they reset immediately
+    signalChannelRef.current?.send({ type: 'broadcast', event: 'hangup', payload: { from: userId } });
+    teardownCall();
+  }, [userId, teardownCall]);
 
   const ring = useCallback(() => {
     setIsCalling(true);
@@ -585,15 +607,44 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     handleRcOfferRef.current = async (offer: RTCSessionDescriptionInit) => {
       handleRcOfferRef.current = null;
       try {
-        // Capture artist's desktop — shown to engineer as the Desktop Control video feed
+        // Capture artist's full desktop — shown to engineer as the Desktop Control video feed.
+        // In Electron: use desktopCapturer to grab the primary display without showing a picker.
+        // This ensures the engineer sees the FULL screen (can minimize apps, see desktop, etc.)
+        // and system dialogs are visible rather than causing a black frame.
         let screenStream: MediaStream | null = null;
         try {
-          screenStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { frameRate: { ideal: 30, max: 30 } },
-            audio: false,
-          });
+          if (window.studioRC?.getScreenSources) {
+            const sources = await window.studioRC.getScreenSources();
+            // On Windows, sources[0] may be the combined virtual desktop of ALL monitors
+            // (very wide, e.g. 3840×1080 for two 1920×1080 screens side-by-side).
+            // Filter those out by aspect ratio — individual screens are ≤ ~2:1 (16:9 = 1.78).
+            const singleScreens = sources.filter(s => {
+              const { width, height } = s.thumbnailSize ?? { width: 1, height: 1 };
+              return height > 0 && (width / height) < 2.5;
+            });
+            const primary = singleScreens[0] ?? sources[0];
+            if (primary) {
+              screenStream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                  mandatory: {
+                    chromeMediaSource: 'desktop',
+                    chromeMediaSourceId: primary.id,
+                    maxFrameRate: 30,
+                  },
+                } as any,
+              });
+            }
+          }
+          if (!screenStream) {
+            // Web browser / fallback: show OS picker
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
+              video: { frameRate: { ideal: 30, max: 30 } },
+              audio: false,
+            });
+          }
         } catch {
-          // Artist declined screen capture — continue with data-channel-only control
+          // Artist declined or capture unavailable — continue with data-channel-only control
         }
 
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });

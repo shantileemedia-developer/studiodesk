@@ -9,6 +9,7 @@ interface Props {
   onRevoke?: () => void;
   onExit?: () => void;
   viewOnly?: boolean;
+  mode?: 'app' | 'desktop';
 }
 
 export interface RemoteControlOverlayHandle {
@@ -16,7 +17,7 @@ export interface RemoteControlOverlayHandle {
 }
 
 const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
-  { userRole, onSendInput, onRevoke, onExit, viewOnly },
+  { userRole, onSendInput, onRevoke, onExit, viewOnly, mode = 'desktop' },
   ref,
 ) => {
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -155,16 +156,17 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [userRole]);
 
-  const label = viewOnly ? 'VIEW ONLY' : 'REMOTE MODE';
-
   // ── Engineer view: badge only (they see their own app natively) ───────────
   if (userRole === 'engineer') {
+    const label = mode === 'app' ? 'APP CONTROL' : viewOnly ? 'VIEW ONLY' : 'REMOTE MODE';
     return createPortal(
       <div className="rc-badge-wrap">
         <div className={`rc-badge${viewOnly ? ' rc-badge-view' : ''}`}>
           <span className="rc-badge-dot" />
           <span className="rc-badge-label">{label}</span>
-          <button className="rc-badge-exit" onClick={onExit} title="Exit Remote Mode (Esc)">✕</button>
+          {onExit && (
+            <button className="rc-badge-exit" onClick={onExit} title="Exit Remote Mode (Esc)">✕</button>
+          )}
         </div>
       </div>,
       document.body,
@@ -172,16 +174,17 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
   }
 
   // ── Artist view: badge + cursor dot (DOM-direct, zero React overhead) ─────
+  const artistLabel = mode === 'app' ? 'APP CONTROL' : viewOnly ? 'ENGINEER WATCHING' : 'REMOTE MODE';
   return (
     <>
       {createPortal(
         <div className="rc-badge-wrap">
           <div className={`rc-badge${viewOnly ? ' rc-badge-view' : ''}`}>
             <span className="rc-badge-dot" />
-            <span className="rc-badge-label">
-              {viewOnly ? 'ENGINEER WATCHING' : 'REMOTE MODE'}
-            </span>
-            <button className="rc-badge-exit" onClick={onRevoke} title="Stop sharing (Esc)">✕</button>
+            <span className="rc-badge-label">{artistLabel}</span>
+            {onRevoke && (
+              <button className="rc-badge-exit" onClick={onRevoke} title="Stop sharing (Esc)">✕</button>
+            )}
           </div>
         </div>,
         document.body,

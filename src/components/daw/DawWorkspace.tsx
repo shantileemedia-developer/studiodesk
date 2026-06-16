@@ -38,11 +38,13 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   const [showLyrics, setShowLyrics] = useState(false);
   const [onlineCount, setOnlineCount] = useState(1);
   const [toast, setToast] = useState<{ msg: string; id: number } | null>(null);
+  const [appRcActive, setAppRcActive] = useState(false);
   const [rcActive, setRcActive] = useState(false);
   const [rcViewOnly, setRcViewOnly] = useState(false);
   const sendRcInputRef   = useRef<((e: RemoteInputEvent) => void) | null>(null);
   const rcOverlayRef     = useRef<RemoteControlOverlayHandle>(null);
   const arrangeRef       = useRef<ArrangeWindowHandle>(null);
+  const appRcActiveRef   = useRef(false);
   const rcActiveRef      = useRef(false);
   const lastViewSyncRef  = useRef(0);
   // Stable callback — never recreated, so engineer's window listeners are never torn down
@@ -101,15 +103,15 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
     }
   }, [liveRemoteStream]);
 
-  // Artist: replay remote input events when RC is active
-  const { replayEvent } = useRemoteControlReplay(rcActive && userRole === 'artist');
+  // Artist: replay remote input events when any RC mode is active
+  const { replayEvent } = useRemoteControlReplay((appRcActive || rcActive) && userRole === 'artist');
 
   // Hide artist's own cursor while RC active so only the engineer's dot is visible
   useEffect(() => {
     if (userRole !== 'artist') return;
-    document.body.classList.toggle('rc-artist-active', rcActive);
+    document.body.classList.toggle('rc-artist-active', appRcActive || rcActive);
     return () => { document.body.classList.remove('rc-artist-active'); };
-  }, [rcActive, userRole]);
+  }, [appRcActive, rcActive, userRole]);
 
   // Stream toggle — artist must have played once so AudioContext is alive
   const handleToggleStream = useCallback(() => {
@@ -125,6 +127,16 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
     }
   }, [isStreaming, startStream, stopStream, audioCtxRef]);
 
+  const handleAppRcChange = useCallback((
+    active: boolean,
+    sendFn: ((e: RemoteInputEvent) => void) | null,
+  ) => {
+    setAppRcActive(active);
+    appRcActiveRef.current = active;
+    // Only update sendFn from App RC if Desktop RC isn't currently active
+    if (!rcActiveRef.current) sendRcInputRef.current = active ? sendFn : null;
+  }, []);
+
   const handleRcStateChange = useCallback((
     active: boolean,
     sendFn: ((e: RemoteInputEvent) => void) | null,
@@ -133,7 +145,12 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
     setRcActive(active);
     rcActiveRef.current = active;
     setRcViewOnly(viewOnly);
-    sendRcInputRef.current = sendFn;
+    // Desktop RC takes priority; when it ends, fall back to App RC send fn
+    if (active) {
+      sendRcInputRef.current = sendFn;
+    } else {
+      sendRcInputRef.current = appRcActiveRef.current ? sendFn : null;
+    }
   }, []);
 
   // Always-current snapshot of panelSizes for use in closure callbacks
@@ -192,9 +209,9 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
     if (event.type !== 'view-sync') replayEvent(event);
   }, [userRole, replayEvent]);
 
-  // Artist → engineer: broadcast view state changes when RC is active (max 30fps)
+  // Artist → engineer: broadcast view state changes when any RC is active (max 30fps)
   const handleViewChange = useCallback((zoom: number, scrollLeft: number, scrollTop: number) => {
-    if (!rcActiveRef.current || userRole !== 'artist') return;
+    if ((!rcActiveRef.current && !appRcActiveRef.current) || userRole !== 'artist') return;
     const now = Date.now();
     if (now - lastViewSyncRef.current < 33) return;
     lastViewSyncRef.current = now;
@@ -447,15 +464,33 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
         audioCtxRef={audioCtxRef}
         onInputEvent={handleInputEvent}
         onRcStateChange={handleRcStateChange}
+        onAppRcChange={handleAppRcChange}
       />
 
-      {/* Remote control overlays */}
+      {/* App RC — automatic, no permission; hidden when Desktop RC takes over */}
+      {appRcActive && !rcActive && userRole === 'engineer' && (
+        <RemoteControlOverlay
+          userRole="engineer"
+          onSendInput={onSendRcInput}
+          mode="app"
+        />
+      )}
+      {appRcActive && !rcActive && userRole === 'artist' && (
+        <RemoteControlOverlay
+          ref={rcOverlayRef}
+          userRole="artist"
+          mode="app"
+        />
+      )}
+
+      {/* Desktop RC — permission-gated, supersedes App RC overlay */}
       {rcActive && userRole === 'engineer' && (
         <RemoteControlOverlay
           userRole="engineer"
           onSendInput={onSendRcInput}
           onExit={() => setRcActive(false)}
           viewOnly={rcViewOnly}
+          mode="desktop"
         />
       )}
       {rcActive && userRole === 'artist' && (
@@ -464,6 +499,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
           userRole="artist"
           onRevoke={() => setRcActive(false)}
           viewOnly={rcViewOnly}
+          mode="desktop"
         />
       )}
     </div>

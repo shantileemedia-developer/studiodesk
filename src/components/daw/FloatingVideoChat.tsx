@@ -17,6 +17,7 @@ interface FloatingVideoChatProps {
   roomCode: string;
   onInputEvent?: (event: RemoteInputEvent) => void;
   onRcStateChange?: (active: boolean, sendFn: ((e: RemoteInputEvent) => void) | null, viewOnly: boolean) => void;
+  onAppRcChange?: (active: boolean, sendFn: ((e: RemoteInputEvent) => void) | null) => void;
   /** Stable refs from DawContext — passed as props to avoid context subscription inside this component */
   masterStreamRef: React.MutableRefObject<MediaStreamAudioDestinationNode | null>;
   audioCtxRef: React.MutableRefObject<AudioContext | null>;
@@ -218,7 +219,7 @@ const DesktopStreamPreview: React.FC<DesktopStreamPreviewProps> = ({ stream, onF
 };
 
 const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
-  userRole, userId, roomCode, onInputEvent, onRcStateChange, masterStreamRef, audioCtxRef,
+  userRole, userId, roomCode, onInputEvent, onRcStateChange, onAppRcChange, masterStreamRef, audioCtxRef,
 }) => {
   const [isMinimized, setIsMinimized] = useState(true);
   const [showChat, setShowChat] = useState(false);
@@ -257,6 +258,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     incomingCall, isCalling, callerId, messages,
     ring, acceptCall, declineCall, sendMessage,
     endCall, toggleMic, toggleVideo,
+    appRcReady,
     rcRequested, rcActive,
     rcEngineerName, rcViewOnly,
     requestRemoteControl, stopRemoteControl,
@@ -364,6 +366,10 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   useEffect(() => {
     onRcStateChange?.(rcActive, rcActive ? sendInputEvent : null, rcViewOnly);
   }, [rcActive, sendInputEvent, onRcStateChange, rcViewOnly]);
+
+  useEffect(() => {
+    onAppRcChange?.(appRcReady, appRcReady ? sendInputEvent : null);
+  }, [appRcReady, sendInputEvent, onAppRcChange]);
 
   // Artist: ensure the DAW master-out track is in the live peer connection.
   // Called when the call becomes active AND again after a short delay in case

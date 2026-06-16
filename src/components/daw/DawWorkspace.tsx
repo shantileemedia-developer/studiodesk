@@ -105,7 +105,10 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   }, [liveRemoteStream]);
 
   // Artist: replay remote input events when any RC mode is active
-  const { replayEvent } = useRemoteControlReplay((appRcActive || rcActive) && userRole === 'artist');
+  const { replayEvent } = useRemoteControlReplay(
+    (appRcActive || rcActive) && userRole === 'artist',
+    rcActive ? 'desktop' : 'app',
+  );
 
   // Hide artist's own cursor while RC active so only the engineer's dot is visible
   useEffect(() => {

@@ -5,7 +5,7 @@ const isElectron = typeof window !== 'undefined' && !!window.studioRC;
 
 // ── Artist-side: receive and execute input from engineer ─────────────────────
 
-export const useRemoteControlReplay = (isActive: boolean) => {
+export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop' = 'desktop') => {
   const capturedElementRef = useRef<Element | null>(null);
   const screenSizeRef      = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const hasDraggedRef      = useRef(false);
@@ -33,8 +33,9 @@ export const useRemoteControlReplay = (isActive: boolean) => {
   const replayEvent = useCallback((event: RemoteInputEvent) => {
     if (!isActive) return;
 
-    // ── Electron path: OS-level injection via nut-js ──────────────────────
-    if (isElectron && screenSizeRef.current) {
+    // ── Electron + Desktop Control: OS-level injection via nut-js ───────
+    // App Control uses DOM dispatch (below) so coords map to app viewport, not screen.
+    if (isElectron && screenSizeRef.current && mode === 'desktop') {
       const { width, height } = screenSizeRef.current;
 
       if (event.type === 'keydown') {

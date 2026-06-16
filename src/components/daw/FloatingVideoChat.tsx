@@ -263,6 +263,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     rcEngineerName, rcViewOnly,
     requestRemoteControl, stopRemoteControl,
     respondToRcPermission,
+    startAppRc, stopAppRc,
     sendInputEvent, syncDawStream,
     switchCallAudioBus, activeCallBus,
   } = useWebRTC({
@@ -726,12 +727,24 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
                 <option value="master-output">Master Out</option>
               </select>
             )}
-            {/* Desktop Control button — System B, separate from DAW session */}
+            {/* App Control — engineer-triggered, no artist permission dialog */}
+            {userRole === 'engineer' && (
+              <button
+                className={`control-btn app-rc-btn ${appRcReady ? 'active' : ''}`}
+                onClick={appRcReady ? stopAppRc : startAppRc}
+                title={appRcReady ? 'App Control active — click to disconnect' : 'Connect App Control (DAW only)'}
+              >
+                <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                  {appRcReady ? '● App Ctrl' : 'App Ctrl'}
+                </span>
+              </button>
+            )}
+            {/* Desktop Control button — System B, full OS access with artist permission */}
             {userRole === 'engineer' && (
               <button
                 className={`control-btn rc-btn ${rcActive ? 'active' : ''}`}
                 onClick={rcActive ? stopRemoteControl : () => requestRemoteControl(userId)}
-                title={rcActive ? 'Stop Desktop Control' : 'Request Desktop Access'}
+                title={rcActive ? 'Stop Desktop Control' : 'Request Desktop Access (files, audio interface, system menus)'}
               >
                 {rcActive ? <MonitorX size={18} /> : <MonitorPlay size={18} />}
                 <span style={{ fontSize: 10, marginLeft: 4, whiteSpace: 'nowrap' }}>

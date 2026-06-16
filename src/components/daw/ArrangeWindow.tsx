@@ -1324,7 +1324,7 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
       const { canceled, filePaths } = await window.studioRC.openAudioDialog();
       if (canceled || !filePaths[0]) return;
       const bytes = await window.studioRC.readFile(filePaths[0]);
-      rawBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      rawBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       fileName = filePaths[0].replace(/.*[\\/]/, '');
     } else {
       const result = await new Promise<{ buffer: ArrayBuffer; name: string } | null>(resolve => {

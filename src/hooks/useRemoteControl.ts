@@ -8,6 +8,7 @@ const isElectron = typeof window !== 'undefined' && !!window.studioRC;
 export const useRemoteControlReplay = (isActive: boolean) => {
   const capturedElementRef = useRef<Element | null>(null);
   const screenSizeRef      = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const hasDraggedRef      = useRef(false);
 
   // Fetch screen size eagerly on mount so it's ready before the first RC event arrives.
   // Also re-fetch whenever RC activates in case the display changed.
@@ -118,8 +119,14 @@ export const useRemoteControlReplay = (isActive: boolean) => {
     }
     if (!target) return;
 
-    if (event.type === 'pointerdown') capturedElementRef.current = target;
-    else if (event.type === 'pointerup') capturedElementRef.current = null;
+    if (event.type === 'pointerdown') {
+      capturedElementRef.current = target;
+      hasDraggedRef.current = false;
+    } else if (event.type === 'pointermove') {
+      hasDraggedRef.current = true;
+    } else if (event.type === 'pointerup') {
+      capturedElementRef.current = null;
+    }
 
     const origSet     = Element.prototype.setPointerCapture;
     const origRelease = Element.prototype.releasePointerCapture;
@@ -165,15 +172,18 @@ export const useRemoteControlReplay = (isActive: boolean) => {
             button: a.button, buttons: a.buttons,
           }));
         }
-        // On pointerup, dispatch a click so React onClick handlers fire (play, stop, add track, etc.)
-        // The browser fires click automatically on real user input but NOT on programmatic dispatchEvent.
-        if (pe.type === 'pointerup') {
+        // On pointerup without a preceding pointermove, dispatch a synthetic click so React
+        // onClick handlers fire. The browser does this automatically on real input but not
+        // on programmatic dispatchEvent. Skip if the engineer dragged — otherwise region
+        // moves, timeline scrubs, and slider drags would spuriously trigger onClick targets.
+        if (pe.type === 'pointerup' && !hasDraggedRef.current) {
           target.dispatchEvent(new MouseEvent('click', {
             bubbles: true, cancelable: true,
             clientX: cssX, clientY: cssY,
             button: a.button,
           }));
         }
+        if (pe.type === 'pointerup') hasDraggedRef.current = false;
       }
     } finally {
       Element.prototype.setPointerCapture     = origSet;

@@ -398,27 +398,61 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
     // ── App RC — automatic, no permission needed ──────────────────────────────
     const pendingAppRcIce: RTCIceCandidateInit[] = [];
 
+    const clearAppRcPc = (pc: RTCPeerConnection) => {
+      if (appRcPcRef.current === pc) {
+        appRcPcRef.current = null;
+        appRcDcRef.current = null;
+      }
+      setAppRcReady(false);
+    };
+
     const initAppRc = async () => {
-      if (!isInitiator || appRcPcRef.current) return;
+      if (!isInitiator) return;
+      // Allow retry if previous PC has failed or closed; otherwise don't duplicate
+      if (appRcPcRef.current) {
+        const s = appRcPcRef.current.connectionState;
+        if (s !== 'failed' && s !== 'closed') return;
+        appRcPcRef.current.close();
+        appRcPcRef.current = null;
+        appRcDcRef.current = null;
+      }
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       appRcPcRef.current = pc;
       const dc = pc.createDataChannel('app-rc', { ordered: false, maxRetransmits: 0 });
       appRcDcRef.current = dc;
       dc.onopen  = () => setAppRcReady(true);
       dc.onclose = () => setAppRcReady(false);
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') clearAppRcPc(pc);
+      };
       pc.onicecandidate = ({ candidate }) => {
         if (candidate) channel.send({ type: 'broadcast', event: 'app-rc-ice', payload: { candidate, from: userId } });
       };
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channel.send({ type: 'broadcast', event: 'app-rc-offer', payload: { offer, from: userId } });
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        channel.send({ type: 'broadcast', event: 'app-rc-offer', payload: { offer, from: userId } });
+      } catch {
+        clearAppRcPc(pc);
+      }
     };
 
     // Artist: auto-answer offer
     channel.on('broadcast', { event: 'app-rc-offer' }, async ({ payload }) => {
-      if (isInitiator || payload.from === userId || appRcPcRef.current) return;
+      if (isInitiator || payload.from === userId) return;
+      // Close stale/failed PC so a fresh offer can re-negotiate
+      if (appRcPcRef.current) {
+        const s = appRcPcRef.current.connectionState;
+        if (s !== 'failed' && s !== 'closed') return;
+        appRcPcRef.current.close();
+        appRcPcRef.current = null;
+        appRcDcRef.current = null;
+      }
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       appRcPcRef.current = pc;
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') clearAppRcPc(pc);
+      };
       pc.ondatachannel = (e) => {
         appRcDcRef.current = e.channel;
         e.channel.onopen    = () => setAppRcReady(true);
@@ -430,11 +464,15 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       pc.onicecandidate = ({ candidate }) => {
         if (candidate) channel.send({ type: 'broadcast', event: 'app-rc-ice', payload: { candidate, from: userId } });
       };
-      await pc.setRemoteDescription(payload.offer);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      channel.send({ type: 'broadcast', event: 'app-rc-answer', payload: { answer, from: userId } });
-      for (const c of pendingAppRcIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      try {
+        await pc.setRemoteDescription(payload.offer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        channel.send({ type: 'broadcast', event: 'app-rc-answer', payload: { answer, from: userId } });
+        for (const c of pendingAppRcIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      } catch {
+        clearAppRcPc(pc);
+      }
     });
 
     // Engineer: receive answer

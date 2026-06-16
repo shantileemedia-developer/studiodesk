@@ -41,7 +41,8 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   const [appRcActive, setAppRcActive] = useState(false);
   const [rcActive, setRcActive] = useState(false);
   const [rcViewOnly, setRcViewOnly] = useState(false);
-  const sendRcInputRef   = useRef<((e: RemoteInputEvent) => void) | null>(null);
+  const sendRcInputRef    = useRef<((e: RemoteInputEvent) => void) | null>(null);
+  const appRcSendFnRef    = useRef<((e: RemoteInputEvent) => void) | null>(null);
   const rcOverlayRef     = useRef<RemoteControlOverlayHandle>(null);
   const arrangeRef       = useRef<ArrangeWindowHandle>(null);
   const appRcActiveRef   = useRef(false);
@@ -133,8 +134,9 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   ) => {
     setAppRcActive(active);
     appRcActiveRef.current = active;
-    // Only update sendFn from App RC if Desktop RC isn't currently active
-    if (!rcActiveRef.current) sendRcInputRef.current = active ? sendFn : null;
+    appRcSendFnRef.current = active ? sendFn : null;
+    // Only update the active send fn from App RC if Desktop RC isn't currently overriding it
+    if (!rcActiveRef.current) sendRcInputRef.current = appRcSendFnRef.current;
   }, []);
 
   const handleRcStateChange = useCallback((
@@ -145,11 +147,11 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
     setRcActive(active);
     rcActiveRef.current = active;
     setRcViewOnly(viewOnly);
-    // Desktop RC takes priority; when it ends, fall back to App RC send fn
     if (active) {
       sendRcInputRef.current = sendFn;
     } else {
-      sendRcInputRef.current = appRcActiveRef.current ? sendFn : null;
+      // Desktop RC ended — restore App RC send fn (sendFn is null here, use stored ref)
+      sendRcInputRef.current = appRcActiveRef.current ? appRcSendFnRef.current : null;
     }
   }, []);
 

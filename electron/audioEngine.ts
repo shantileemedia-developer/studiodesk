@@ -259,21 +259,31 @@ export class NativeAudioEngine extends EventEmitter {
     this.tracks  = runtimes;
     this.playing = true;
 
-    try {
-      this.outStream = new naudiodon.AudioIO({
-        outOptions: {
-          channelCount: NUM_CHANNELS,
-          sampleFormat: naudiodon.SampleFormat32Bit,
-          sampleRate:   sr,
-          deviceId:     outDeviceId,
-          closeOnError: false,
-        },
-      });
-      this.outStream.start();
-    } catch (err) {
-      this.playing = false;
-      this.emit('error', `Output open failed: ${(err as Error).message}`);
-      return;
+    // Reuse an existing outStream opened by monitoring rather than creating a
+    // second one — ASIO uses exclusive device access and rejects a second open.
+    // If monitoring pipe is active, unpipe it while _fill() drives the output;
+    // stopPlayback() will re-pipe when the fill loop stops.
+    if (this.outStream) {
+      if (this.monitoring && this.inStream) {
+        this.inStream.unpipe(this.outStream);
+      }
+    } else {
+      try {
+        this.outStream = new naudiodon.AudioIO({
+          outOptions: {
+            channelCount: NUM_CHANNELS,
+            sampleFormat: naudiodon.SampleFormat32Bit,
+            sampleRate:   sr,
+            deviceId:     outDeviceId,
+            closeOnError: false,
+          },
+        });
+        this.outStream.start();
+      } catch (err) {
+        this.playing = false;
+        this.emit('error', `Output open failed: ${(err as Error).message}`);
+        return;
+      }
     }
 
     this.fillTimer = setInterval(() => this._fill(), FILL_INTERVAL);
@@ -374,6 +384,11 @@ export class NativeAudioEngine extends EventEmitter {
       try { this.outStream.quit(); } catch {}
       this.outStream = null;
     }
+    // Re-pipe monitoring passthrough now that _fill() has stopped writing.
+    // (startPlayback unpiped it to prevent two concurrent writers to outStream.)
+    if (this.monitoring && this.inStream && this.outStream) {
+      this.inStream.pipe(this.outStream, { end: false });
+    }
     this.liveParams.clear();
   }
 
@@ -401,6 +416,14 @@ export class NativeAudioEngine extends EventEmitter {
   ) {
     if (!naudiodon) { this.emit('unavailable'); return; }
     await this.stopRecording();
+
+    // Close any input stream opened by standalone monitoring before we open
+    // the recording stream. Without this, the monitoring inStream is silently
+    // leaked and ASIO would reject the second open on the same device.
+    if (this.inStream) {
+      try { this.inStream.unpipe(); this.inStream.quit(); } catch {}
+      this.inStream = null;
+    }
 
     this.recFilePath = filePath;
     this.recPcmBytes = 0;
@@ -540,18 +563,24 @@ export class NativeAudioEngine extends EventEmitter {
       return;
     }
 
-    // Standalone monitoring (not recording)
+    // Standalone monitoring (not recording).
+    // Use separate in + out streams (not duplex) so this.outStream is always
+    // set when monitoring is active. startPlayback() can then safely reuse it
+    // without hitting an ASIO exclusive-access conflict.
     try {
       this.inStream = new naudiodon.AudioIO({
-        inOptions:  { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: inDeviceId,  closeOnError: false },
-        outOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: outDeviceId, closeOnError: false },
+        inOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: inDeviceId, closeOnError: false },
       });
-      // Duplex stream emits 'data' for the input side — emit to mic-input bus
-      if (this._micBusSubs > 0) {
-        this.inStream.on('data', (chunk: Buffer) => {
-          if (this._micBusSubs > 0) this.emit('busChunk', 'mic-input', chunk);
+      this.inStream.on('data', (chunk: Buffer) => {
+        if (this._micBusSubs > 0) this.emit('busChunk', 'mic-input', chunk);
+      });
+      if (!this.outStream) {
+        this.outStream = new naudiodon.AudioIO({
+          outOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: outDeviceId, closeOnError: false },
         });
+        this.outStream.start();
       }
+      this.inStream.pipe(this.outStream, { end: false });
       this.inStream.start();
       this._closeMicBusStream(); // inStream takes over
     } catch (err) {

@@ -11,7 +11,7 @@ export const useRemoteControlReplay = (
   onInjectionError?: (err: unknown) => void,
 ) => {
   const capturedElementRef  = useRef<Element | null>(null);
-  const screenSizeRef       = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const screenSizeRef       = useRef<{ x: number; y: number; width: number; height: number; scaleFactor: number } | null>(null);
   const hasDraggedRef       = useRef(false);
   const prevHoverTargetRef  = useRef<Element | null>(null);
   const onInjectionErrorRef = useRef(onInjectionError);
@@ -46,7 +46,7 @@ export const useRemoteControlReplay = (
     // ── Electron + Desktop Control: OS-level injection via nut-js ───────
     // App Control uses DOM dispatch (below) so coords map to app viewport, not screen.
     if (isElectron && screenSizeRef.current && mode === 'desktop') {
-      const { width, height } = screenSizeRef.current;
+      const { width, height, x: screenX, y: screenY, scaleFactor = 1 } = screenSizeRef.current;
       const eventType = event.type;
 
       // Unified inject: logs success/failure so silent drops are visible.
@@ -85,8 +85,10 @@ export const useRemoteControlReplay = (
       // Add the display's virtual-screen offset (x, y) so clicks land on the
       // correct monitor when the primary display is not the leftmost one.
       const pe  = event as Extract<RemoteInputEvent, { nx: number }>;
-      const x   = Math.round(pe.nx * width  + (screenSizeRef.current?.x ?? 0));
-      const y   = Math.round(pe.ny * height + (screenSizeRef.current?.y ?? 0));
+      // nut-js Win32 backend uses physical pixel coordinates (SendInput ABSOLUTE mode).
+      // Multiply logical bounds by scaleFactor to convert logical → physical pixels.
+      const x   = Math.round(pe.nx * width  * scaleFactor + screenX * scaleFactor);
+      const y   = Math.round(pe.ny * height * scaleFactor + screenY * scaleFactor);
       const btn = 'button' in pe ? (pe.button === 2 ? 'right' : pe.button === 1 ? 'middle' : 'left') : 'left';
 
       switch (pe.type) {

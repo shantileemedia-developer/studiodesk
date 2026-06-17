@@ -69,11 +69,6 @@
   color: rgba(255, 80, 80, 0.9);
 }
 
-/* ── Hide artist's own cursor — only the engineer's dot is visible ────────── */
-body.rc-artist-active * {
-  cursor: none !important;
-}
-
 /* ── Engineer cursor dot on artist's screen ──────────────────────────────── */
 .rc-remote-cursor {
   position: fixed;

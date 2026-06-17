@@ -160,12 +160,16 @@ export const useNativeAudioEngine = () => {
   const clickIntervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const nextClickTimeRef   = useRef(0);
 
+  const playbackBusNextTimeRef = useRef(0);
+
   const getAudioCtx = useCallback((): AudioContext => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
       audioCtxRef.current = new AudioContext({ sampleRate: 48000 });
+      masterStreamRef.current = audioCtxRef.current.createMediaStreamDestination();
+      playbackBusNextTimeRef.current = audioCtxRef.current.currentTime + 0.06;
     }
     return audioCtxRef.current;
-  }, [audioCtxRef]);
+  }, [audioCtxRef, masterStreamRef]);
 
   const scheduleClick = useCallback((ctx: AudioContext, time: number, accent: boolean) => {
     const DUR = 0.022;
@@ -236,6 +240,57 @@ export const useNativeAudioEngine = () => {
     if (!ctx) return;
     startMetronome(ctx, currentTimeRef.current);
   }, [state.transport.tempo, state.transport.timeSignature]); // eslint-disable-line
+
+  // ── Playback-mix bus → masterStreamRef (DAW monitoring stream) ─────────────
+  // Subscribe to the native engine's rendered output bus and pipe PCM chunks
+  // into the Web Audio master stream destination so useAudioStream can offer
+  // the playback audio to the engineer via WebRTC.
+  useEffect(() => {
+    if (!eng()) return;
+
+    // Eagerly init AudioContext so masterStreamRef.current is ready before the
+    // first getDawStream() call (which happens when the video call starts).
+    getAudioCtx();
+
+    window.audioEngine!.subscribeBus('playback-mix').catch(() => {});
+
+    const INIT_LATENCY_S = 0.06;
+    const JITTER_PAD_S   = 0.04;
+
+    const off = window.audioEngine!.onBusChunk((busId, data) => {
+      if (busId !== 'playback-mix') return;
+      const ctx  = audioCtxRef.current;
+      const dest = masterStreamRef.current;
+      if (!ctx || ctx.state === 'closed' || !dest) return;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+
+      const f32       = new Float32Array(data.buffer, data.byteOffset, data.byteLength / 4);
+      const numFrames = f32.length / 2; // interleaved stereo
+
+      const buf = ctx.createBuffer(2, numFrames, ctx.sampleRate);
+      const L   = buf.getChannelData(0);
+      const R   = buf.getChannelData(1);
+      for (let i = 0; i < numFrames; i++) { L[i] = f32[i * 2]; R[i] = f32[i * 2 + 1]; }
+
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(dest);
+
+      const now = ctx.currentTime;
+      // Reset scheduling when behind real-time (after silence gap between playback sessions).
+      if (playbackBusNextTimeRef.current < now + JITTER_PAD_S) {
+        playbackBusNextTimeRef.current = now + INIT_LATENCY_S;
+      }
+      src.start(playbackBusNextTimeRef.current);
+      playbackBusNextTimeRef.current += numFrames / ctx.sampleRate;
+    });
+
+    return () => {
+      off();
+      window.audioEngine?.unsubscribeBus('playback-mix').catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Animation / IPC listener loop ──────────────────────────────────────────
 

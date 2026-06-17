@@ -196,6 +196,7 @@ let nutMouse: any = null;
 let nutKeyboard: any = null;
 let nutKey: any = null;
 let nutButton: any = null;
+let nutPoint: any = null;
 
 async function loadNut() {
   if (!nutMouse) {
@@ -205,7 +206,7 @@ async function loadNut() {
       nutKeyboard = nut.keyboard;
       nutKey      = nut.Key;
       nutButton   = nut.Button;
-      // Speed settings — lower = faster
+      nutPoint    = nut.Point;
       nutMouse.config.mouseSpeed    = 10000;
       nutKeyboard.config.autoDelayMs = 0;
     } catch (err) {
@@ -258,32 +259,34 @@ const codeToNutKey = (code: string) => {
 // rc:inject-input — translate RemoteInputEvent → nut-js OS call
 ipcMain.handle('rc:inject-input', async (_e, event: any) => {
   await loadNut();
-  if (!nutMouse || !nutKeyboard) return;
+  if (!nutMouse || !nutKeyboard || !nutPoint) return;
+
+  // setPosition() snaps the cursor instantly (no interpolation).
+  // move() animates along a path — unusable for real-time remote control.
+  const pos = (x: number, y: number) => nutMouse.setPosition(new nutPoint(x, y));
 
   try {
-    const { Point } = await import('@nut-tree-fork/nut-js');
-
     switch (event.type) {
       case 'mouse-move':
-        await nutMouse.move([new Point(event.x, event.y)]);
+        await pos(event.x, event.y);
         break;
 
       case 'mouse-down': {
-        await nutMouse.move([new Point(event.x, event.y)]);
+        await pos(event.x, event.y);
         const btn = toNutButton(event.button);
         if (btn !== null) await nutMouse.pressButton(btn);
         break;
       }
 
       case 'mouse-up': {
-        await nutMouse.move([new Point(event.x, event.y)]);
+        await pos(event.x, event.y);
         const btn = toNutButton(event.button);
         if (btn !== null) await nutMouse.releaseButton(btn);
         break;
       }
 
       case 'mouse-click': {
-        await nutMouse.move([new Point(event.x, event.y)]);
+        await pos(event.x, event.y);
         const btn = toNutButton(event.button);
         if (btn !== null) {
           if (event.double) {
@@ -296,7 +299,7 @@ ipcMain.handle('rc:inject-input', async (_e, event: any) => {
       }
 
       case 'scroll': {
-        await nutMouse.move([new Point(event.x, event.y)]);
+        await pos(event.x, event.y);
         if (event.deltaY !== 0) await nutMouse.scrollDown(Math.round(event.deltaY / 100));
         if (event.deltaX !== 0) await nutMouse.scrollRight(Math.round(event.deltaX / 100));
         break;
@@ -315,15 +318,18 @@ ipcMain.handle('rc:inject-input', async (_e, event: any) => {
       }
     }
   } catch (err) {
-    // Don't let a failed injection crash anything
     console.error('[RC] inject-input error:', err);
+    throw err;
   }
 });
 
-// rc:get-screen-size — primary display logical bounds (includes x/y virtual-screen offset)
+// rc:get-screen-size — primary display bounds + scale factor.
+// bounds are logical (DIP) pixels; scaleFactor converts to physical pixels,
+// which is what nut-js's Win32 backend expects (SendInput absolute coords).
 ipcMain.handle('rc:get-screen-size', () => {
-  const { x, y, width, height } = electronScreen.getPrimaryDisplay().bounds;
-  return { x, y, width, height };
+  const display = electronScreen.getPrimaryDisplay();
+  const { x, y, width, height } = display.bounds;
+  return { x, y, width, height, scaleFactor: display.scaleFactor };
 });
 
 // rc:get-sources — enumerate desktop capture sources for full-desktop share.

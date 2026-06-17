@@ -579,15 +579,42 @@ const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatP
     }
   }, [dawControlActive, appRcActive, signalChannelReady, userRole, startAppRc, stopAppRc]);
 
-  // Artist: ensure the DAW master-out track is in the live peer connection.
-  // Called when the call becomes active AND again after a short delay in case
-  // the master stream wasn't initialised yet at call-start time.
+  // Artist: push DAW master-out track into the live peer connection.
+  // Retries at 2 s, 5 s, and 10 s because the AudioContext + master stream
+  // may not be created until the artist first presses Play/Record.
   useEffect(() => {
     if (!callActive || userRole !== 'artist') return;
     syncDawStream();
-    const t = setTimeout(syncDawStream, 2000);
-    return () => clearTimeout(t);
+    const t1 = setTimeout(syncDawStream, 2000);
+    const t2 = setTimeout(syncDawStream, 5000);
+    const t3 = setTimeout(syncDawStream, 10000);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [callActive, userRole, syncDawStream]);
+
+  // Keep artist's AudioContext alive during a call.
+  // Browsers suspend AudioContext after a period of no user interaction, which
+  // silences the MediaStreamDestination used for DAW monitoring.
+  useEffect(() => {
+    if (userRole !== 'artist' || !callActive) return;
+    const iv = setInterval(() => {
+      const ctx = audioCtxRef.current;
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {}).then(() => syncDawStream());
+      }
+    }, 8000);
+    return () => clearInterval(iv);
+  }, [userRole, callActive, audioCtxRef, syncDawStream]);
+
+  // Keep engineer's monitoring AudioContext alive during a call.
+  // Suspension on the engineer's side causes the received DAW audio to go silent.
+  useEffect(() => {
+    if (userRole !== 'engineer' || !callActive) return;
+    const iv = setInterval(() => {
+      const ctx = audioCtxRef.current;
+      if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    }, 8000);
+    return () => clearInterval(iv);
+  }, [userRole, callActive, audioCtxRef]);
 
 
   // ── Camera preview — starts when widget opens, releases when call goes active ──

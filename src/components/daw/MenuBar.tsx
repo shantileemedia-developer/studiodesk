@@ -114,6 +114,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(projectName);
 
+  // Keep nameInput in sync when project is renamed externally (folder set, project loaded)
+  useEffect(() => {
+    if (!editingName) setNameInput(projectName);
+  }, [projectName, editingName]);
+
   const toast = useCallback((msg: string) => {
     setLocalToast(msg);
     setTimeout(() => setLocalToast(null), 2500);

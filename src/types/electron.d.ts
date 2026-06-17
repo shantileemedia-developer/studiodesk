@@ -21,8 +21,8 @@ declare global {
       /** Inject an OS-level mouse/keyboard event via nut-js at real screen coordinates. */
       injectInput: (event: OsInputEvent) => Promise<void>;
 
-      /** Primary display logical bounds; x/y are virtual-screen offsets on multi-monitor setups. */
-      getScreenSize: () => Promise<{ x: number; y: number; width: number; height: number }>;
+      /** Primary display logical bounds + DPI scale factor. Multiply width/height by scaleFactor for physical pixels (required by nut-js). */
+      getScreenSize: () => Promise<{ x: number; y: number; width: number; height: number; scaleFactor: number }>;
 
       /** Desktop capture sources with thumbnailSize for aspect-ratio filtering. */
       getScreenSources: () => Promise<Array<{

@@ -3,7 +3,7 @@
   "description": "RiddimSync — Real-time remote audio collaboration for recording engineers and artists",
   "author": "Shantel Bradford <shantelbridget93@gmail.com>",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {

@@ -31,9 +31,13 @@ const MonitorPanel: React.FC<MonitorPanelProps> = ({
   const [volume,  setVolume]  = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
 
-  // ── Web Audio refs ─────────────────────────────────────────────────────────
+  // ── Audio element (playback) — bypasses AudioContext suspension issues ──────
+  // The <audio> element goes through Electron's built-in media pipeline which
+  // is immune to Chromium's AudioContext autoplay restrictions.
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+
+  // ── Web Audio refs (metering only — NOT connected to ctx.destination) ───────
   const ctxRef       = useRef<AudioContext | null>(null);
-  const gainRef      = useRef<GainNode | null>(null);
   const analyserLRef = useRef<AnalyserNode | null>(null);
   const analyserRRef = useRef<AnalyserNode | null>(null);
 
@@ -56,67 +60,58 @@ const MonitorPanel: React.FC<MonitorPanelProps> = ({
   useEffect(() => { mutedRef.current  = isMuted; }, [isMuted]);
   useEffect(() => { sourceRef.current = source; },  [source]);
 
-  // ── Build/tear-down audio graph when stream changes ────────────────────────
+  // ── Wire stream to <audio> element + build meter graph ────────────────────
   useEffect(() => {
-    // Tear down previous graph
+    // Tear down previous meter graph
     if (ctxRef.current) {
-      gainRef.current?.disconnect();
       analyserLRef.current?.disconnect();
       analyserRRef.current?.disconnect();
       ctxRef.current.close().catch(() => {});
-      ctxRef.current      = null;
-      gainRef.current     = null;
+      ctxRef.current       = null;
       analyserLRef.current = null;
       analyserRRef.current = null;
     }
 
+    // Route stream through <audio> element for reliable playback
+    const el = audioElRef.current;
+    if (el) {
+      el.srcObject = remoteStream;
+      if (remoteStream) el.play().catch(() => {});
+    }
+
     if (!remoteStream) return;
 
+    // Meter-only AudioContext: source → splitter → analysers (no ctx.destination)
     const ctx = new AudioContext({ sampleRate: 48000 });
     ctxRef.current = ctx;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
-    const src     = ctx.createMediaStreamSource(remoteStream);
-    const gain    = ctx.createGain();
-    gainRef.current = gain;
-
-    // Pre-gain splitter feeds the metre — levels are visible even when muted
-    const meterSplitter = ctx.createChannelSplitter(2);
+    const src            = ctx.createMediaStreamSource(remoteStream);
+    const meterSplitter  = ctx.createChannelSplitter(2);
     const aL = ctx.createAnalyser(); aL.fftSize = 1024; analyserLRef.current = aL;
     const aR = ctx.createAnalyser(); aR.fftSize = 1024; analyserRRef.current = aR;
     src.connect(meterSplitter);
     meterSplitter.connect(aL, 0);
     meterSplitter.connect(aR, 1);
-    // aL / aR are analysis-only — not connected to destination
-
-    // Post-gain output (volume-controlled)
-    src.connect(gain);
-    gain.connect(ctx.destination);
-
-    // Set initial values
-    const targetGain = sourceRef.current === 'mic' ? 0 : (mutedRef.current ? 0 : volumeRef.current);
-    gain.gain.value = targetGain;
-
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
     return () => {
       src.disconnect();
-      gain.disconnect();
       aL.disconnect();
       aR.disconnect();
       ctx.close().catch(() => {});
       ctxRef.current       = null;
-      gainRef.current      = null;
       analyserLRef.current = null;
       analyserRRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remoteStream]);
 
-  // ── Apply gain when volume/mute/source changes ─────────────────────────────
+  // ── Apply volume / mute / source to the <audio> element ───────────────────
   const applyGain = useCallback(() => {
-    if (!gainRef.current || !ctxRef.current) return;
-    const targetGain = sourceRef.current === 'mic' ? 0 : (mutedRef.current ? 0 : volumeRef.current);
-    gainRef.current.gain.setTargetAtTime(targetGain, ctxRef.current.currentTime, 0.015);
+    const el = audioElRef.current;
+    if (!el) return;
+    const silent = sourceRef.current === 'mic' || mutedRef.current;
+    el.volume = silent ? 0 : volumeRef.current;
   }, []);
 
   useEffect(() => { applyGain(); }, [volume, isMuted, source, applyGain]);
@@ -183,6 +178,10 @@ const MonitorPanel: React.FC<MonitorPanelProps> = ({
 
   return (
     <div className={`monitor-panel ${isReceiving ? 'receiving' : ''}`}>
+      {/* Hidden audio element — Electron's media pipeline plays the stream
+          reliably without depending on AudioContext autoplay state. */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <audio ref={audioElRef} autoPlay style={{ display: 'none' }} />
 
       {/* ── Status column ── */}
       <div className="monitor-info">

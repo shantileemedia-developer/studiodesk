@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, desktopCapturer, screen as electronScreen, safeStorage } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, desktopCapturer, screen as electronScreen, safeStorage } from 'electron';
 import nodemailer from 'nodemailer';
 import { autoUpdater } from 'electron-updater';
 import path from 'path';
@@ -189,6 +189,7 @@ ipcMain.handle('window:maximize',  () => {
   else mainWindow?.maximize();
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
+ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(text));
 
 // ── IPC: OS-level Remote Control (AnyDesk-style) ────────────────────────────
 // Lazy-load nut-js so it doesn't slow down startup if RC is never used

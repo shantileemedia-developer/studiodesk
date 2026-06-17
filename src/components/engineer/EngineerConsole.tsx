@@ -111,15 +111,12 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
   const copyCode = useCallback(() => {
     if (!roomCode) return;
     const doWrite = (): Promise<void> => {
-      if (window.studioClipboard) {
-        window.studioClipboard.write(roomCode);
-        return Promise.resolve();
-      }
+      if (window.studioClipboard) return window.studioClipboard.write(roomCode);
       return navigator.clipboard.writeText(roomCode);
     };
     doWrite()
       .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); })
-      .catch(() => {});
+      .catch(() => { setCopied(false); });
   }, [roomCode]);
 
   // ── Clients ───────────────────────────────────────────────────────────────

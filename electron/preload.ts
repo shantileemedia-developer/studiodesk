@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent, clipboard } from 'electron';
+import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 
 // ── Legacy API (kept for backward compat) ────────────────────────────────────
 contextBridge.exposeInMainWorld('api', {
@@ -126,7 +126,7 @@ contextBridge.exposeInMainWorld('studioRC', {
     ipcRenderer.invoke('fs:read-file', filePath),
 });
 
-// ── Clipboard Bridge — reliable in Electron regardless of origin ──────────────
+// ── Clipboard Bridge — routes through main process for guaranteed access ──────
 contextBridge.exposeInMainWorld('studioClipboard', {
-  write: (text: string) => clipboard.writeText(text),
+  write: (text: string) => ipcRenderer.invoke('clipboard:write', text),
 });

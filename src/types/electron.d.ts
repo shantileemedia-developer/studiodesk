@@ -18,7 +18,7 @@ declare global {
       load:   (projectDir: string) => Promise<string>;
     };
     studioClipboard?: {
-      write: (text: string) => void;
+      write: (text: string) => Promise<void>;
     };
     studioRC: {
       /** Inject an OS-level mouse/keyboard event via nut-js at real screen coordinates. */

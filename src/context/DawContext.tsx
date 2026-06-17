@@ -34,6 +34,10 @@ export interface Track {
   activeVersionId: string;
   inputDeviceId?: string;  // 'default' or a MediaDeviceInfo.deviceId; undefined = use global pref
   groupId?: number | null;  // 1-8, null/undefined = no group
+  // Folder track hierarchy: null = top-level, non-null = child of that track id
+  parentId?: string | null;
+  // Hidden tracks are excluded from the arrange view (collapsed folder, disabled track, etc.)
+  isHidden?: boolean;
 }
 
 export interface Region {
@@ -112,6 +116,11 @@ export interface DawState {
     trackListWidth: number;
     mixerHeight: number;
   };
+  panelVisibility: {
+    inspector: boolean;
+    mixer: boolean;
+    mediaPool: boolean;
+  };
 }
 
 export type ActiveTool = 'select' | 'range' | 'draw' | 'erase' | 'split' | 'render' | 'mute' | 'zoom';
@@ -171,7 +180,8 @@ export type DawBaseAction =
   | { type: 'SET_POOL_ITEM_UPLOAD_STATUS'; payload: { id: string; status: 'uploading' | 'done' | 'failed'; storagePath?: string } }
   | { type: 'SET_TRACK_ZOOM'; payload: number }
   | { type: 'SET_UI_DENSITY'; payload: 'compact' | 'standard' | 'large' }
-  | { type: 'SET_PANEL_SIZE'; payload: Partial<{ inspectorWidth: number; trackListWidth: number; mixerHeight: number }> };
+  | { type: 'SET_PANEL_SIZE'; payload: Partial<{ inspectorWidth: number; trackListWidth: number; mixerHeight: number }> }
+  | { type: 'SET_PANEL_VISIBILITY'; payload: Partial<{ inspector: boolean; mixer: boolean; mediaPool: boolean }> };
 
 export type DawAction = DawBaseAction & { fromSync?: boolean };
 
@@ -229,6 +239,7 @@ export const initialState: DawState = {
   trackZoom: 1.0,
   uiDensity: 'standard' as const,
   panelSizes: { inspectorWidth: 220, trackListWidth: 210, mixerHeight: 420 },
+  panelVisibility: { inspector: true, mixer: true, mediaPool: true },
   transport: {
     isPlaying: false,
     isRecording: false,
@@ -267,6 +278,7 @@ function dawReducer(state: DawState, action: DawAction): DawState {
     case 'SET_TRACK_ZOOM':
     case 'SET_UI_DENSITY':
     case 'SET_PANEL_SIZE':
+    case 'SET_PANEL_VISIBILITY':
       return coreReducer(state, action);
     default: {
       const newState = coreReducer(state, action);
@@ -718,6 +730,8 @@ function coreReducer(state: DawState, action: DawAction): DawState {
       return { ...state, uiDensity: action.payload };
     case 'SET_PANEL_SIZE':
       return { ...state, panelSizes: { ...state.panelSizes, ...action.payload } };
+    case 'SET_PANEL_VISIBILITY':
+      return { ...state, panelVisibility: { ...state.panelVisibility, ...action.payload } };
 
     default:
       return state;

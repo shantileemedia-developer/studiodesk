@@ -84,6 +84,13 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
   const pxPerSecRef               = useRef(pxPerSec);
   pxPerSecRef.current             = pxPerSec;
 
+  // Reset scroll to bar 1 on mount — prevents browser scroll restoration from
+  // jumping to wherever the user was before a page refresh.
+  useEffect(() => {
+    if (window.history) window.history.scrollRestoration = 'manual';
+    if (contentScrollRef.current) contentScrollRef.current.scrollLeft = 0;
+  }, []);
+
   // ── View-sync (RC session mirroring) ─────────────────────────────
   const onViewChangeRef   = useRef(onViewChange);
   useEffect(() => { onViewChangeRef.current = onViewChange; }, [onViewChange]);
@@ -1128,15 +1135,23 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
 
   // Scroll to show the END marker when the user explicitly sets project length from settings.
   // Skip when it's an auto-calculation driven by clip content (those match max clip end exactly).
-  const prevProjectLengthRef = useRef(state.projectLength);
+  // null = not yet initialized (first change is always a DB load, not a manual edit — skip it).
+  const prevProjectLengthRef = useRef<number | null>(null);
   useEffect(() => {
+    if (prevProjectLengthRef.current === null) {
+      // First run: record the loaded value without scrolling (avoids jumping to end on project open)
+      prevProjectLengthRef.current = state.projectLength;
+      return;
+    }
     if (state.projectLength === prevProjectLengthRef.current) return;
     prevProjectLengthRef.current = state.projectLength;
     if (isPlayingRef.current || isRecordingRef.current) return;
+    // Skip scroll when the user hasn't scrolled away from bar 1 yet — this change
+    // is a DB state restore on load, not a manual edit of the project length.
+    const el = contentScrollRef.current;
+    if (!el || el.scrollLeft === 0) return;
     const autoCalc = regionsRef.current.reduce((m, r) => Math.max(m, r.startTime + r.duration), 0);
     if (Math.abs(state.projectLength - autoCalc) < 0.5) return; // auto-set from clips, skip scroll
-    const el = contentScrollRef.current;
-    if (!el) return;
     const endPx = state.projectLength * pxPerSecRef.current;
     el.scrollLeft = Math.max(0, endPx - el.clientWidth * 0.65);
   }, [state.projectLength]);

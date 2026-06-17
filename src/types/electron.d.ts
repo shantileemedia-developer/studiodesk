@@ -11,6 +11,12 @@ declare global {
       maximize: () => Promise<void>;
       close:    () => Promise<void>;
     };
+    studioProject?: {
+      openFolderDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>;
+      setup:  (projectDir: string) => Promise<string>;
+      save:   (projectDir: string, json: string) => Promise<void>;
+      load:   (projectDir: string) => Promise<string>;
+    };
     studioRC: {
       /** Inject an OS-level mouse/keyboard event via nut-js at real screen coordinates. */
       injectInput: (event: OsInputEvent) => Promise<void>;

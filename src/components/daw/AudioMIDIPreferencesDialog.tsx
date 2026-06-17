@@ -17,7 +17,7 @@ export interface AudioPrefs {
   nativeOutputDeviceId: number;
 }
 
-const PREFS_KEY = 'studiodesk_audio_prefs';
+const PREFS_KEY = 'riddimSync_audio_prefs';
 
 export const DEFAULT_AUDIO_PREFS: AudioPrefs = {
   inputDeviceId:        'default',

@@ -2,7 +2,7 @@
 .rc-badge-wrap {
   position: fixed;
   top: 14px;
-  left: 50%;
+  left: 70%;
   transform: translateX(-50%);
   z-index: 99999;
   pointer-events: none;

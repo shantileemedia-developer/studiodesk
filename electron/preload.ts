@@ -82,6 +82,18 @@ contextBridge.exposeInMainWorld('studioEmail', {
   send:         (to: string, subject: string, body: string): Promise<void> => ipcRenderer.invoke('email:send', to, subject, body),
 });
 
+// ── Project Bridge — artist-side local file management ───────────────────────
+contextBridge.exposeInMainWorld('studioProject', {
+  openFolderDialog: (): Promise<{ canceled: boolean; filePaths: string[] }> =>
+    ipcRenderer.invoke('dialog:open-project-folder'),
+  setup: (projectDir: string): Promise<string> =>
+    ipcRenderer.invoke('project:setup', projectDir),
+  save:  (projectDir: string, json: string): Promise<void> =>
+    ipcRenderer.invoke('project:save', projectDir, json),
+  load:  (projectDir: string): Promise<string> =>
+    ipcRenderer.invoke('project:load', projectDir),
+});
+
 // ── StudioRC Bridge — OS-level remote control ────────────────────────────────
 contextBridge.exposeInMainWorld('studioRC', {
   /** Inject an OS-level mouse/keyboard event via @nut-tree-fork/nut-js. */
@@ -111,5 +123,5 @@ contextBridge.exposeInMainWorld('studioRC', {
    * Used after openAudioDialog() to load the chosen audio file without another dialog.
    */
   readFile: (filePath: string): Promise<Uint8Array> =>
-    ipcRenderer.invoke('fs:read-file'),
+    ipcRenderer.invoke('fs:read-file', filePath),
 });

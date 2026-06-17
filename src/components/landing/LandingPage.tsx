@@ -26,7 +26,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
           <div className="landing-logo-icon">
             <Radio size={20} color="#00ffcc" />
           </div>
-          StudioDESK
+          RiddimSync
         </div>
         <div className="landing-nav">
           <a href="#roles">How It Works</a>
@@ -48,7 +48,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
               <span className="text-gradient">Anywhere in the World.</span>
             </h1>
             <p className="hero-subtitle">
-              StudioDESK connects recording engineers and artists in real-time. High-fidelity audio, seamless communication, and a Cubase-style workflow built for the modern internet.
+              RiddimSync connects recording engineers and artists in real-time. High-fidelity audio, seamless communication, and a Cubase-style workflow built for the modern internet.
             </p>
 
             <div className="hero-actions">
@@ -57,7 +57,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
                 target="_blank"
                 rel="noreferrer"
                 className="btn btn-primary"
-                download="StudioDESK-Setup.exe"
+                download="RiddimSync-Setup.exe"
                 onClick={(e) => {
                   if (!exeDownloadUrl) {
                     e.preventDefault();
@@ -87,12 +87,12 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
               {screenshotError ? (
                 <div className="app-preview-placeholder">
                   <Radio size={48} color="#00ffcc" opacity={0.4} />
-                  <span>StudioDESK</span>
+                  <span>RiddimSync</span>
                 </div>
               ) : (
                 <img
                   src="/screenshot.png"
-                  alt="StudioDESK Interface"
+                  alt="RiddimSync Interface"
                   className="app-preview-img"
                   onError={() => setScreenshotError(true)}
                 />
@@ -105,7 +105,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
         <section id="roles" className="roles-section">
           <div className="section-heading">
             <h2>Two Roles. One Session.</h2>
-            <p>StudioDESK is built around the real-world studio relationship between engineer and artist.</p>
+            <p>RiddimSync is built around the real-world studio relationship between engineer and artist.</p>
           </div>
           <div className="roles-grid">
             <div className="role-card glass-panel">
@@ -147,7 +147,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
             <div className="workflow-step glass-panel">
               <div className="step-number">01</div>
               <h3>Engineer Creates a Room</h3>
-              <p>Open StudioDESK on your desktop, log in as Engineer, and start a new session. You get a short room code to share with your artist.</p>
+              <p>Open RiddimSync on your desktop, log in as Engineer, and start a new session. You get a short room code to share with your artist.</p>
             </div>
             <div className="workflow-arrow">
               <ArrowRight size={24} color="#444" />
@@ -155,7 +155,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
             <div className="workflow-step glass-panel">
               <div className="step-number">02</div>
               <h3>Artist Joins from Any Browser</h3>
-              <p>The artist opens StudioDESK in Chrome or Edge, enters the room code, and their audio stream is live — no downloads needed.</p>
+              <p>The artist opens RiddimSync in Chrome or Edge, enters the room code, and their audio stream is live — no downloads needed.</p>
             </div>
             <div className="workflow-arrow">
               <ArrowRight size={24} color="#444" />
@@ -163,7 +163,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
             <div className="workflow-step glass-panel">
               <div className="step-number">03</div>
               <h3>Press Record. Make Music.</h3>
-              <p>The engineer arms the track and hits record. Both sides capture in sync. Review takes, edit clips, bounce stems — all inside StudioDESK.</p>
+              <p>The engineer arms the track and hits record. Both sides capture in sync. Review takes, edit clips, bounce stems — all inside RiddimSync.</p>
             </div>
           </div>
         </section>
@@ -218,10 +218,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLaunchWeb, exeDownloadUrl }
       <footer className="landing-footer">
         <div className="footer-content">
           <div className="footer-top">
-            <div className="footer-logo">StudioDESK</div>
+            <div className="footer-logo">RiddimSync</div>
             <div className="footer-links">
-              <a href="https://github.com/shantileemedia-developer/studiodesk/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy Policy</a>
-              <a href="https://github.com/shantileemedia-developer/studiodesk/blob/main/TERMS.md" target="_blank" rel="noreferrer">Terms of Service</a>
+              <a href="https://github.com/shantileemedia-developer/riddimSync/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy Policy</a>
+              <a href="https://github.com/shantileemedia-developer/riddimSync/blob/main/TERMS.md" target="_blank" rel="noreferrer">Terms of Service</a>
               <a href="mailto:shantileemedia@gmail.com">Contact Support</a>
             </div>
           </div>

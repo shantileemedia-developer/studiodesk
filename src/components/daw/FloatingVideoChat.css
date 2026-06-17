@@ -727,22 +727,41 @@
   background-color: #e69900;
 }
 
-/* Remote Control button */
-.control-btn.rc-btn {
+/* Session control buttons — APP / Desktop */
+.session-ctrl-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid #3a3b3e;
   background-color: #2a2b2e;
   color: #a0a0a0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
 }
-.control-btn.rc-btn:hover {
+.session-ctrl-btn:hover {
   background-color: #3a3b3e;
   color: #d1d1d1;
+  border-color: #555;
 }
-.control-btn.rc-btn.active {
-  background-color: rgba(255, 77, 77, 0.2);
-  color: #ff4d4d;
-  border: 1px solid rgba(255, 77, 77, 0.4);
+.session-ctrl-btn.active {
+  background-color: rgba(0, 255, 204, 0.15);
+  color: #00ffcc;
+  border-color: rgba(0, 255, 204, 0.4);
 }
-.control-btn.rc-btn.active:hover {
-  background-color: rgba(255, 77, 77, 0.3);
+.session-ctrl-btn.active:hover {
+  background-color: rgba(0, 255, 204, 0.22);
+}
+.session-ctrl-btn.desktop.active {
+  background-color: rgba(255, 77, 77, 0.15);
+  color: #ff6b6b;
+  border-color: rgba(255, 77, 77, 0.4);
+}
+.session-ctrl-btn.desktop.active:hover {
+  background-color: rgba(255, 77, 77, 0.22);
 }
 
 /* RC live dot variant */
@@ -753,6 +772,11 @@
 @keyframes rc-dot-pulse {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0.3; }
+}
+
+.live-dot.app-sync {
+  background-color: #00ffcc;
+  animation: pulse-green 2s infinite;
 }
 
 /* ── RC consent — fullscreen modal (mirrors incoming-call-modal style) ── */
@@ -878,6 +902,77 @@
   cursor: pointer;
 }
 
+/* ── Unified consent modal — permission sections ─────────────────── */
+.rc-consent-section {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #2e2f32;
+  border-radius: 8px;
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rc-consent-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #666;
+  margin-bottom: 2px;
+}
+
+.rc-consent-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rc-consent-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #aaa;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.rc-consent-radio-label input[type="radio"] {
+  accent-color: #ff7744;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.rc-consent-radio-label:hover { color: #ccc; }
+
+.rc-consent-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #aaa;
+  cursor: pointer;
+}
+.rc-consent-checkbox-row input[type="checkbox"] {
+  accent-color: #00ffcc;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.rc-consent-checkbox-row:hover { color: #ccc; }
+
+.rc-consent-hint {
+  font-size: 10px;
+  color: #ff7744;
+  background: rgba(255, 119, 68, 0.07);
+  border: 1px solid rgba(255, 119, 68, 0.18);
+  border-radius: 5px;
+  padding: 5px 8px;
+  margin: 2px 0 0;
+  line-height: 1.4;
+}
+
 /* ── Engineer Monitor Level knob ─────────────────────────────────── */
 .monitor-knob-row {
   display: flex;
@@ -952,8 +1047,9 @@
   width: 100%;
   height: 100%;
   display: block;
-  /* fill = no letterboxing → mouse coords map correctly to artist's screen */
-  object-fit: fill;
+  /* contain = preserve artist's screen aspect ratio; DesktopControlFullscreen
+     adjusts coordinate normalisation to account for the letterbox bars. */
+  object-fit: contain;
 }
 
 .desktop-control-hud {
@@ -987,6 +1083,24 @@
   background: #ff4444;
   animation: pulse 1.5s ease-in-out infinite;
   flex-shrink: 0;
+}
+
+.desktop-control-hud-btn {
+  pointer-events: all;
+  background: rgba(40, 80, 160, 0.85);
+  color: #e0e8ff;
+  border: 1px solid rgba(100, 150, 255, 0.4);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer !important;
+  transition: background 0.15s;
+}
+
+.desktop-control-hud-btn:hover {
+  background: rgba(50, 100, 200, 1);
+  color: #fff;
 }
 
 .desktop-control-exit-btn {

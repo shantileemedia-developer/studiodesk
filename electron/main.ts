@@ -118,9 +118,9 @@ const createWindow = () => {
     if (mainWindow && details.reason !== 'clean-exit') {
       dialog.showMessageBox(mainWindow, {
         type: 'warning',
-        title: 'StudioDESK — Unexpected Error',
+        title: 'RiddimSync — Unexpected Error',
         message: 'The app window crashed unexpectedly.',
-        detail: 'StudioDESK will reload automatically.',
+        detail: 'RiddimSync will reload automatically.',
         buttons: ['OK'],
       }).then(() => {
         if (mainWindow) {
@@ -157,7 +157,7 @@ function setupAutoUpdater() {
     dialog.showMessageBox({
       type: 'info',
       title: 'Update Ready',
-      message: 'A new version of StudioDESK is ready to install.',
+      message: 'A new version of RiddimSync is ready to install.',
       detail: 'Click "Restart & Update" to apply it now, or "Later" to install on next launch.',
       buttons: ['Restart & Update', 'Later'],
       defaultId: 0,
@@ -439,11 +439,37 @@ ipcMain.handle('audio:unsubscribeBus', (e, busId: string) => {
 // Used by the renderer to materialise blob/HTTP audio URLs as local files
 // so the native engine (which runs in main) can read them by path.
 ipcMain.handle('audio:writeTemp', async (_e, name: string, data: ArrayBuffer) => {
-  const dir  = path.join(app.getPath('temp'), 'StudioDESK-audio');
+  const dir  = path.join(app.getPath('temp'), 'RiddimSync-audio');
   const file = path.join(dir, name.replace(/[^a-zA-Z0-9_\-. ]/g, '_'));
   await fs.promises.mkdir(dir, { recursive: true });
   await fs.promises.writeFile(file, Buffer.from(data));
   return file;
+});
+
+// ── Project folder I/O (artist-side; Electron native path) ──────────────────
+
+ipcMain.handle('dialog:open-project-folder', async () => {
+  return dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    title: 'Set Project Folder',
+  });
+});
+
+ipcMain.handle('project:setup', async (_e, projectDir: string) => {
+  const audioDir = path.join(projectDir, 'Audio');
+  await fs.promises.mkdir(audioDir,                          { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Exports'), { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Renders'), { recursive: true });
+  NativeAudioEngine.setAudioDir(audioDir);
+  return audioDir;
+});
+
+ipcMain.handle('project:save', async (_e, projectDir: string, json: string) => {
+  await fs.promises.writeFile(path.join(projectDir, 'project.json'), json, 'utf-8');
+});
+
+ipcMain.handle('project:load', async (_e, projectDir: string) => {
+  return fs.promises.readFile(path.join(projectDir, 'project.json'), 'utf-8');
 });
 
 // ── Email (Gmail SMTP via nodemailer) ────────────────────────────────────────
@@ -480,7 +506,7 @@ ipcMain.handle('email:send', async (_e, to: string, subject: string, body: strin
   });
 
   await transporter.sendMail({
-    from: `"StudioDESK" <${cfg.user}>`,
+    from: `"RiddimSync" <${cfg.user}>`,
     to,
     subject,
     text: body,

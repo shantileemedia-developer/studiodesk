@@ -1,0 +1,316 @@
+/* ── Monitor Panel — engineer-only real-time master bus monitor ──────────────
+   Sits between the Remote Session bar and the arrange area.
+   Always rendered; shows "NO SIGNAL" badge when artist is not streaming.
+─────────────────────────────────────────────────────────────────────────── */
+
+.monitor-panel {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 52px;
+  padding: 0 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid #222326;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #505460;
+  overflow: hidden;
+}
+
+.monitor-panel.receiving {
+  color: #8899aa;
+  background: rgba(0, 229, 180, 0.03);
+  border-bottom-color: rgba(0, 229, 180, 0.1);
+}
+
+/* ── Status column ─────────────────────────────────────────────────────────── */
+.monitor-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+  width: 88px;
+}
+
+.monitor-title {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  color: #444;
+  text-transform: uppercase;
+}
+
+.monitor-panel.receiving .monitor-title {
+  color: rgba(0, 229, 180, 0.6);
+}
+
+.monitor-conn-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #444;
+}
+
+.monitor-conn-badge.live     { color: #00e5b4; }
+.monitor-conn-badge.connecting { color: #ff9900; }
+.monitor-conn-badge.failed   { color: #ff4444; }
+
+.monitor-conn-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.monitor-conn-badge.live .monitor-conn-dot {
+  box-shadow: 0 0 5px #00e5b4;
+  animation: monitor-pulse 2s ease-in-out infinite;
+}
+
+.monitor-conn-badge.connecting .monitor-conn-dot {
+  animation: monitor-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes monitor-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.monitor-conn-label {
+  white-space: nowrap;
+}
+
+.monitor-bitrate {
+  font-size: 8.5px;
+  color: #3a4050;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.monitor-panel.receiving .monitor-bitrate {
+  color: #506070;
+}
+
+/* ── Stereo meters ─────────────────────────────────────────────────────────── */
+.monitor-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 120px;
+  max-width: 380px;
+}
+
+.monitor-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monitor-ch {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #3a4050;
+  width: 10px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.monitor-panel.receiving .monitor-ch {
+  color: #607080;
+}
+
+.monitor-meter-track {
+  flex: 1;
+  height: 9px;
+  background: #111214;
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid #1e1f22;
+}
+
+.monitor-meter-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0%;
+  border-radius: 1px;
+  /* Three-zone gradient: green → yellow → red */
+  background: linear-gradient(
+    to right,
+    #00c896 0%,  #00c896 75%,
+    #e0c000 75%, #e0c000 93%,
+    #ff4040 93%, #ff4040 100%
+  );
+  will-change: width;
+  transition: width 15ms linear;
+}
+
+.monitor-meter-peak {
+  position: absolute;
+  top: 0;
+  left: 0%;
+  width: 2px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.55);
+  will-change: left;
+}
+
+/* ── Volume + Mute ─────────────────────────────────────────────────────────── */
+.monitor-vol-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.monitor-vol-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 80px;
+  height: 3px;
+  background: #2a2c30;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.monitor-vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #00e5b4;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0, 229, 180, 0.5);
+}
+
+.monitor-vol-pct {
+  font-size: 9px;
+  color: #5a6570;
+  width: 26px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-mute-btn {
+  background: none;
+  border: 1px solid #2a2c30;
+  border-radius: 4px;
+  color: #5a6570;
+  font-size: 10px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+
+.monitor-mute-btn:hover {
+  background: rgba(255, 77, 77, 0.12);
+  border-color: rgba(255, 77, 77, 0.3);
+  color: #ff4d4d;
+}
+
+.monitor-mute-btn.muted {
+  background: rgba(255, 77, 77, 0.15);
+  border-color: rgba(255, 77, 77, 0.35);
+  color: #ff4d4d;
+}
+
+/* ── Source selector ───────────────────────────────────────────────────────── */
+.monitor-src-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.monitor-src-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #3a4050;
+  margin-right: 2px;
+}
+
+.monitor-src-btn {
+  background: none;
+  border: 1px solid #252730;
+  border-radius: 4px;
+  color: #3a4050;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.monitor-src-btn:hover {
+  background: rgba(255,255,255,0.04);
+  border-color: #3a4050;
+  color: #8899aa;
+}
+
+.monitor-src-btn.active {
+  background: rgba(0, 229, 180, 0.1);
+  border-color: rgba(0, 229, 180, 0.3);
+  color: #00e5b4;
+}
+
+/* ── Quality selector ─────────────────────────────────────────────────────── */
+.monitor-quality-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  border-left: 1px solid #1e2028;
+  padding-left: 14px;
+}
+
+.monitor-quality-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #3a4050;
+  margin-right: 2px;
+}
+
+.monitor-quality-btn {
+  background: none;
+  border: 1px solid #252730;
+  border-radius: 4px;
+  color: #3a4050;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.monitor-quality-btn:hover {
+  background: rgba(255,255,255,0.04);
+  border-color: #3a4050;
+  color: #8899aa;
+}
+
+.monitor-quality-btn.active {
+  background: rgba(120, 60, 220, 0.12);
+  border-color: rgba(120, 60, 220, 0.3);
+  color: #a070f0;
+}

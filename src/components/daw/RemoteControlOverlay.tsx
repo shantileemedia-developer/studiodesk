@@ -58,14 +58,24 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
   // ── Engineer: forward events, rAF-throttle pointermove ───────────────────
   useEffect(() => {
     if (userRole !== 'engineer') return;
+    // No onSendInput = badge-only mode (App RC showing label without event capture)
+    if (!onSendInputRef.current) return;
+
+    // App RC: capture phase so we see events before any stopPropagation in bubble handlers
+    // (e.g. VerticalFader.onPointerDown). Capture-only-forward never calls stopImmediatePropagation
+    // so the engineer's own React handlers still fire normally for immediate local feedback.
+    // Desktop RC: bubble phase (the overlay's transparent div is on top, so there's no React
+    // handler below it to conflict with).
+    const isAppRc = mode === 'app';
+    const cap = isAppRc;
 
     const norm = (e: PointerEvent | MouseEvent | WheelEvent) => ({
       nx: e.clientX / window.innerWidth,
       ny: e.clientY / window.innerHeight,
     });
 
-    // Elements marked data-desktop-hud are UI controls (e.g. Exit button on the full-screen
-    // desktop overlay) — clicks on them must NOT be forwarded to the artist's machine.
+    // Elements marked data-desktop-hud (e.g. FloatingVideoChat widget) work locally —
+    // their events are never forwarded to the artist and always reach their own handlers.
     const isOnHud = (e: Event) =>
       !!(e.target as HTMLElement)?.closest('[data-desktop-hud]');
 
@@ -79,6 +89,7 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
 
     const onPointerMove = (e: PointerEvent) => {
       if (isOnHud(e)) return;
+      // Pointermove: no stopImmediatePropagation — hover effects on engineer's UI are fine
       const { nx, ny } = norm(e);
       pendingMove = { type: 'pointermove', nx, ny, button: e.button, buttons: e.buttons };
       if (!rafId) rafId = requestAnimationFrame(flushMove);
@@ -98,8 +109,8 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
       onSendInputRef.current?.({ type: 'dblclick', ...norm(e), button: e.button });
     };
     const onContextMenu = (e: MouseEvent) => {
-      e.preventDefault(); // suppress engineer's own browser context menu
       if (isOnHud(e)) return;
+      if (!isAppRc) e.preventDefault(); // desktop mode: suppress engineer's own context menu
       onSendInputRef.current?.({ type: 'contextmenu', ...norm(e), button: e.button });
     };
     const onWheel = (e: WheelEvent) => {
@@ -108,6 +119,7 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { onExitRef.current?.(); return; }
+      if (isOnHud(e)) return;
       onSendInputRef.current?.({
         type: 'keydown', key: e.key, code: e.code,
         ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey,
@@ -116,6 +128,7 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Escape') return;
+      if (isOnHud(e)) return;
       onSendInputRef.current?.({
         type: 'keyup', key: e.key, code: e.code,
         ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey,
@@ -123,28 +136,45 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
       });
     };
 
-    window.addEventListener('pointerdown',  onPointerDown);
-    window.addEventListener('pointermove',  onPointerMove);
-    window.addEventListener('pointerup',    onPointerUp);
-    window.addEventListener('dblclick',     onDblClick);
-    window.addEventListener('contextmenu',  onContextMenu);
-    window.addEventListener('wheel',        onWheel, { passive: true });
-    window.addEventListener('keydown',      onKeyDown, true);
-    window.addEventListener('keyup',        onKeyUp,   true);
+    // In App RC mode, forward input value changes so text typed into controlled
+    // React inputs (e.g. the tempo popover) reaches the artist's identical input.
+    const onInputEvent = isAppRc ? (e: Event) => {
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+      if (isOnHud(e)) return;
+      const rect = target.getBoundingClientRect();
+      if (!rect.width && !rect.height) return;
+      onSendInputRef.current?.({
+        type: 'input-value',
+        nx: (rect.left + rect.width  / 2) / window.innerWidth,
+        ny: (rect.top  + rect.height / 2) / window.innerHeight,
+        value: target.value,
+      });
+    } : null;
+
+    window.addEventListener('pointerdown',  onPointerDown, cap);
+    window.addEventListener('pointermove',  onPointerMove, cap);
+    window.addEventListener('pointerup',    onPointerUp,   cap);
+    window.addEventListener('dblclick',     onDblClick,    cap);
+    window.addEventListener('contextmenu',  onContextMenu, cap);
+    window.addEventListener('wheel', onWheel, { passive: true });
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup',   onKeyUp,   true);
+    if (onInputEvent) window.addEventListener('input', onInputEvent, true);
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener('pointerdown',  onPointerDown);
-      window.removeEventListener('pointermove',  onPointerMove);
-      window.removeEventListener('pointerup',    onPointerUp);
-      window.removeEventListener('dblclick',     onDblClick);
-      window.removeEventListener('contextmenu',  onContextMenu);
-      window.removeEventListener('wheel',        onWheel);
-      window.removeEventListener('keydown',      onKeyDown, true);
-      window.removeEventListener('keyup',        onKeyUp,   true);
+      window.removeEventListener('pointerdown',  onPointerDown, cap);
+      window.removeEventListener('pointermove',  onPointerMove, cap);
+      window.removeEventListener('pointerup',    onPointerUp,   cap);
+      window.removeEventListener('dblclick',     onDblClick,    cap);
+      window.removeEventListener('contextmenu',  onContextMenu, cap);
+      window.removeEventListener('wheel', onWheel, { passive: true } as EventListenerOptions);
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup',   onKeyUp,   true);
+      if (onInputEvent) window.removeEventListener('input', onInputEvent, true);
     };
-  // Only re-run if role changes — callbacks are accessed via stable refs
-  }, [userRole]);
+  }, [userRole, mode]);
 
   // ── Artist: ESC revokes RC ────────────────────────────────────────────────
   useEffect(() => {
@@ -158,7 +188,7 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
 
   // ── Engineer view: badge only (they see their own app natively) ───────────
   if (userRole === 'engineer') {
-    const label = mode === 'app' ? 'APP CONTROL' : viewOnly ? 'VIEW ONLY' : 'REMOTE MODE';
+    const label = mode === 'app' ? 'APP CONTROL' : viewOnly ? 'SCREEN VIEW' : 'DESKTOP CONTROL';
     return createPortal(
       <div className="rc-badge-wrap">
         <div className={`rc-badge${viewOnly ? ' rc-badge-view' : ''}`}>
@@ -174,7 +204,7 @@ const RemoteControlOverlay = forwardRef<RemoteControlOverlayHandle, Props>((
   }
 
   // ── Artist view: badge + cursor dot (DOM-direct, zero React overhead) ─────
-  const artistLabel = mode === 'app' ? 'APP CONTROL' : viewOnly ? 'ENGINEER WATCHING' : 'REMOTE MODE';
+  const artistLabel = mode === 'app' ? 'APP CONTROL' : viewOnly ? 'SCREEN VIEW' : 'DESKTOP CONTROL';
   return (
     <>
       {createPortal(

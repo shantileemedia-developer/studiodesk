@@ -8,6 +8,7 @@ import DawWorkspace from './components/daw/DawWorkspace';
 import AuthScreen from './components/auth/AuthScreen';
 import SessionScreen from './components/session/SessionScreen';
 import LandingPage from './components/landing/LandingPage';
+import EngineerConsole from './components/engineer/EngineerConsole';
 
 // Admin panel loaded lazily — not needed by most users
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'));
@@ -121,7 +122,7 @@ function App() {
     return (
       <LandingPage
         onLaunchWeb={handleLaunchWeb}
-        exeDownloadUrl={`https://github.com/shantileemedia-developer/studiodesk/releases/download/v${__APP_VERSION__}/StudioDESK-Setup-${__APP_VERSION__}.exe`}
+        exeDownloadUrl={`https://github.com/shantileemedia-developer/riddimSync/releases/download/v${__APP_VERSION__}/RiddimSync-Setup-${__APP_VERSION__}.exe`}
       />
     );
   }
@@ -130,7 +131,7 @@ function App() {
     return (
       <div className="app-container">
         <div className="top-bar">
-          <div className="top-bar-title">StudioDESK</div>
+          <div className="top-bar-title">RiddimSync</div>
         </div>
         <AuthScreen
           onLogin={(role, activeSession) => {
@@ -143,13 +144,44 @@ function App() {
     );
   }
 
+  // ── Engineer: goes to the Engineer Console (manages its own session/room state) ──
+  if (userRole === 'engineer') {
+    return (
+      <>
+        {showPinTip && (
+          <div style={{
+            position: 'fixed', top: 12, right: 12, zIndex: 9999,
+            background: '#1e1e2e', border: '1px solid #7c3aed', borderRadius: 8,
+            padding: '10px 14px', color: '#e2e8f0', fontSize: 13, maxWidth: 320,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          }}>
+            <strong style={{ color: '#a78bfa' }}>Tip:</strong> Right-click the RiddimSync icon in your taskbar while the app is running, then choose <strong>Pin to taskbar</strong> for quick access.
+            <button onClick={() => setShowPinTip(false)} style={{
+              marginLeft: 10, background: 'none', border: 'none', color: '#94a3b8',
+              cursor: 'pointer', fontSize: 16, lineHeight: 1, float: 'right',
+            }}>×</button>
+          </div>
+        )}
+        <EngineerConsole
+          userId={session.user.id}
+          isAdmin={isAdmin}
+          onOpenAdmin={() => setShowAdminPanel(true)}
+        />
+        {showAdminPanel && (
+          <Suspense fallback={null}>
+            <AdminPanel onClose={() => setShowAdminPanel(false)} />
+          </Suspense>
+        )}
+      </>
+    );
+  }
+
+  // ── Artist: session screen → DAW ─────────────────────────────────────────
   if (!roomCode) {
     return (
       <div className="app-container">
         <div className="top-bar">
-          <div className="top-bar-title">
-            StudioDESK — {userRole === 'engineer' ? 'Engineer' : 'Artist'}
-          </div>
+          <div className="top-bar-title">RiddimSync — Artist</div>
           {isAdmin && (
             <button
               className="top-bar-admin-btn"
@@ -185,7 +217,7 @@ function App() {
             padding: '10px 14px', color: '#e2e8f0', fontSize: 13, maxWidth: 320,
             boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
           }}>
-            <strong style={{ color: '#a78bfa' }}>Tip:</strong> Right-click the StudioDESK icon in your taskbar while the app is running, then choose <strong>Pin to taskbar</strong> for quick access.
+            <strong style={{ color: '#a78bfa' }}>Tip:</strong> Right-click the RiddimSync icon in your taskbar while the app is running, then choose <strong>Pin to taskbar</strong> for quick access.
             <button onClick={() => setShowPinTip(false)} style={{
               marginLeft: 10, background: 'none', border: 'none', color: '#94a3b8',
               cursor: 'pointer', fontSize: 16, lineHeight: 1, float: 'right',

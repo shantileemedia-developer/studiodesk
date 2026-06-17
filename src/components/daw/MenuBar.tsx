@@ -3,7 +3,7 @@ import { useDaw } from '../../context/DawContext';
 import { initialState } from '../../context/DawContext';
 import type { Region, PoolItem } from '../../context/DawContext';
 import { supabase } from '../../lib/supabaseClient';
-import { saveToAudioFolder, generatePeaksStereo } from '../../utils/audioUtils';
+import { saveToAudioFolder, generatePeaksStereo, uploadAudioToSupabase } from '../../utils/audioUtils';
 import { exportToWav, exportStems, consolidateTrack, bounceRegion, cropRegion, exportBetweenLocators } from '../../utils/exportUtils';
 import './MenuBar.css';
 
@@ -21,6 +21,8 @@ interface Menu {
 }
 
 interface MenuBarProps {
+  userRole?: 'artist' | 'engineer';
+  onSendRemoteCommand?: (command: string) => void;
   onOpenAudioPrefs?: () => void;
   onLeaveSession?: () => void;
   onCloseProject?: () => void;
@@ -64,8 +66,10 @@ const SHORTCUT_LIST = [
 ];
 
 const MenuBar: React.FC<MenuBarProps> = ({
+  userRole, onSendRemoteCommand,
   onOpenAudioPrefs, onLeaveSession, onCloseProject, onToggleLyrics, isAdmin, onOpenAdmin,
 }) => {
+  const isEngineer = userRole === 'engineer';
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [localToast, setLocalToast] = useState<string | null>(null);
   const [showAbout, setShowAbout] = useState(false);
@@ -82,6 +86,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
   });
   const [projectTempo, setProjectTempo] = useState(0);
   const [exportProgress, setExportProgress] = useState<string | null>(null);
+
+  // Electron native project folder path (artist only; persisted across restarts)
+  const [projectDirPath, setProjectDirPath] = useState<string | null>(() =>
+    localStorage.getItem('sd_projectDirPath') ?? null
+  );
 
   // Open Recent — store last 5 project names in localStorage
   const [recentProjects, setRecentProjects] = useState<string[]>(() => {
@@ -112,18 +121,40 @@ const MenuBar: React.FC<MenuBarProps> = ({
 
   // ── Project I/O ──────────────────────────────────────────────────────
 
+  // Strip blob/file URLs before persisting — they're ephemeral and useless on reload.
+  const serializeForSave = useCallback((s: typeof state) => {
+    const strip = (url: string) =>
+      url && (url.startsWith('blob:') || url.startsWith('file:')) ? '' : url;
+    return JSON.stringify({
+      ...s,
+      poolItems: s.poolItems.map(p => ({ ...p, audioUrl: strip(p.audioUrl) })),
+      regions:   s.regions.map(r => ({ ...r, audioUrl: strip(r.audioUrl), localFilePath: undefined })),
+    }, null, 2);
+  }, []);
+
   const handleSave = useCallback(async (dirHandle = projectDirHandle) => {
+    const json = serializeForSave(state);
+
+    // Electron native path — save via main-process IPC (artist only)
+    if (window.studioProject && projectDirPath) {
+      try {
+        await window.studioProject.save(projectDirPath, json);
+        addToRecent(projectDirPath.replace(/.*[\\/]/, ''));
+        if (!dirHandle) { toast('Project saved.'); return; }
+      } catch (err) { console.error('Native save error:', err); }
+    }
+
     if (!dirHandle) { handleSaveAs(); return; }
     try {
       const fh = await dirHandle.getFileHandle('project.json', { create: true });
       const w = await fh.createWritable();
-      await w.write(JSON.stringify(state, null, 2));
+      await w.write(json);
       await w.close();
       addToRecent(dirHandle.name);
       toast('Project saved.');
     } catch (err) { console.error('Save error:', err); toast('Save failed.'); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectDirHandle, state, toast, addToRecent]);
+  }, [projectDirHandle, projectDirPath, state, serializeForSave, toast, addToRecent]);
 
   const handleSaveAs = useCallback(async () => {
     if (!('showDirectoryPicker' in window)) {
@@ -141,15 +172,38 @@ const MenuBar: React.FC<MenuBarProps> = ({
       dispatch({ type: 'RENAME_PROJECT', payload: dh.name });
       const fh = await dh.getFileHandle('project.json', { create: true });
       const w = await fh.createWritable();
-      await w.write(JSON.stringify({ ...state, projectName: dh.name }, null, 2));
+      await w.write(serializeForSave({ ...state, projectName: dh.name }));
       await w.close();
       addToRecent(dh.name);
       toast(`Saved to: ${dh.name}`);
     } catch (err: any) {
       if (err.name !== 'AbortError') alert('Failed to save project. Grant folder permissions and try again.');
     }
-  }, [state, setProjectDirHandle, setAudioDirHandle, toast, addToRecent]);
+  }, [state, serializeForSave, dispatch, setProjectDirHandle, setAudioDirHandle, toast, addToRecent]);
 
+
+  // Electron-native "Set Project Folder…" — uses main-process dialog to avoid
+  // FSAA limitations and wires the native audio engine to the correct Audio/ dir.
+  const handleSetProjectFolder = useCallback(async () => {
+    if (!window.studioProject) { handleSaveAs(); return; }
+    try {
+      const { canceled, filePaths } = await window.studioProject.openFolderDialog();
+      if (canceled || !filePaths[0]) return;
+      const dir = filePaths[0];
+      const audioDir = await window.studioProject.setup(dir);
+      console.log('[Project] Audio dir set to:', audioDir);
+      setProjectDirPath(dir);
+      localStorage.setItem('sd_projectDirPath', dir);
+      const projectName = dir.replace(/.*[\\/]/, '');
+      dispatch({ type: 'RENAME_PROJECT', payload: projectName });
+      addToRecent(projectName);
+      await window.studioProject.save(dir, serializeForSave({ ...state, projectName }));
+      toast(`Project folder set: ${projectName}`);
+    } catch (err: any) {
+      console.error('Set project folder error:', err);
+      toast('Failed to set project folder.');
+    }
+  }, [handleSaveAs, state, serializeForSave, dispatch, addToRecent, toast]);
 
   const handleOpenProject = useCallback(async () => {
     if (!('showDirectoryPicker' in window)) {
@@ -208,6 +262,8 @@ const MenuBar: React.FC<MenuBarProps> = ({
   }, [dispatch, setProjectDirHandle, setAudioDirHandle, toast]);
 
   const handleImportAudio = useCallback(async () => {
+    // Engineer: trigger the import dialog on the artist's machine via Supabase remote-op.
+    if (isEngineer) { onSendRemoteCommand?.('open-audio-dialog'); return; }
     let rawBuffer: ArrayBuffer;
     let fileName: string;
     if (window.studioRC?.openAudioDialog) {
@@ -232,13 +288,17 @@ const MenuBar: React.FC<MenuBarProps> = ({
       fileName = result.name;
     }
 
-    const url = URL.createObjectURL(new Blob([rawBuffer]));
+    console.log('[IMPORT 1] Import start — file:', fileName, 'rawBuffer bytes:', rawBuffer.byteLength);
+    const importBlob = new Blob([rawBuffer]);
+    const url = URL.createObjectURL(importBlob);
     try {
       const actx = new AudioContext();
       const buf = await actx.decodeAudioData(rawBuffer);
       const duration = buf.duration;
+      console.log('[IMPORT 2] Audio decoded — duration:', duration, 'channels:', buf.numberOfChannels, 'samples:', buf.length);
       const { left: peaks, right: rawPeaksR } = await generatePeaksStereo(buf);
       await actx.close();
+      console.log('[IMPORT 3] Waveform generated — left peaks:', peaks.length, 'right peaks:', rawPeaksR?.length ?? 0);
       const poolItemId = `pool_${Date.now()}`;
       const name = fileName.replace(/\.[^.]+$/, '');
       const poolItem: PoolItem = {
@@ -251,11 +311,14 @@ const MenuBar: React.FC<MenuBarProps> = ({
         waveformPeaks: peaks,
         waveformPeaksR: rawPeaksR,
       };
+      console.log('[IMPORT 4] Dispatching ADD_POOL_ITEM — id:', poolItemId);
       dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
+      console.log('[IMPORT 5] ADD_POOL_ITEM dispatched');
       if (state.selectedTrackId) {
         const track = state.tracks.find(t => t.id === state.selectedTrackId);
         if (track) {
           const peaksR = track.type === 'stereo' ? rawPeaksR : null;
+          console.log('[IMPORT 6] Dispatching ADD_REGION — track:', track.id, 'selectedTrackId present');
           dispatch({
             type: 'ADD_REGION',
             payload: {
@@ -274,14 +337,26 @@ const MenuBar: React.FC<MenuBarProps> = ({
               sourcePeaksR: rawPeaksR,
             },
           });
+          console.log('[IMPORT 7] ADD_REGION dispatched');
         }
+      } else {
+        console.log('[IMPORT 6] No track selected — skipping ADD_REGION');
       }
       if (audioDirHandle) {
         try { await saveToAudioFolder(audioDirHandle, name, buf); } catch (err) { console.error('Audio folder save failed:', err); }
       }
       toast(`Imported: ${name}`);
-    } catch { toast('Could not decode audio file.'); }
-  }, [dispatch, state.selectedTrackId, state.tracks, currentTimeRef, audioDirHandle, toast]);
+      console.log('[IMPORT 8] Starting Supabase upload — blob size:', importBlob.size);
+      uploadAudioToSupabase(importBlob, fileName)
+        .then(({ publicUrl }) => {
+          console.log('[IMPORT 9] Upload complete — dispatching UPDATE_AUDIO_URLS, publicUrl:', publicUrl);
+          dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId, audioUrl: publicUrl } });
+          console.log('[IMPORT 10] UPDATE_AUDIO_URLS dispatched');
+        })
+        .catch(err => console.error('[IMPORT ERROR] Supabase upload failed:', err));
+      console.log('[IMPORT DONE] All sync dispatches complete — upload running in background');
+    } catch (err) { console.error('[IMPORT ERROR] Decode failed:', err); toast('Could not decode audio file.'); }
+  }, [isEngineer, onSendRemoteCommand, dispatch, state.selectedTrackId, state.tracks, currentTimeRef, audioDirHandle, toast]);
 
   // ── Clipboard ────────────────────────────────────────────────────────
 
@@ -446,8 +521,8 @@ const MenuBar: React.FC<MenuBarProps> = ({
     {
       label: 'File',
       items: [
-        { label: 'New Project',           shortcut: 'Ctrl+N',       onClick: handleNewProject },
-        { label: 'Open Project…',         shortcut: 'Ctrl+O',       onClick: handleOpenProject },
+        { label: 'New Project',    shortcut: 'Ctrl+N', onClick: handleNewProject, disabled: isEngineer },
+        { label: 'Open Project…', shortcut: 'Ctrl+O', onClick: handleOpenProject, disabled: isEngineer },
         ...(recentProjects.length === 0
           ? [{ label: 'Open Recent', disabled: true }]
           : [
@@ -464,8 +539,12 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { separator: true, label: '' },
         { label: 'Close Project',         onClick: onCloseProject ?? (() => toast('No session to close.')) },
         { separator: true, label: '' },
-        { label: 'Save',                  shortcut: 'Ctrl+S',       onClick: () => handleSave() },
-        { label: 'Save As…',              shortcut: 'Ctrl+Shift+S', onClick: handleSaveAs },
+        { label: 'Save',                  shortcut: 'Ctrl+S',       onClick: () => handleSave(), disabled: isEngineer },
+        { label: 'Save As…',              shortcut: 'Ctrl+Shift+S', onClick: handleSaveAs, disabled: isEngineer },
+        ...(window.studioProject && !isEngineer
+          ? [{ label: 'Set Project Folder…', onClick: handleSetProjectFolder }]
+          : []
+        ),
         { separator: true, label: '' },
         { label: 'Import Audio File…',                              onClick: handleImportAudio },
         { separator: true, label: '' },
@@ -476,7 +555,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
         { separator: true, label: '' },
         { label: 'Leave Session', onClick: onLeaveSession },
         { label: 'Sign Out', onClick: async () => { await supabase.auth.signOut(); window.location.reload(); } },
-        { label: 'Quit', shortcut: 'Ctrl+Q', onClick: () => { if (confirm('Quit StudioDESK?')) window.close(); } },
+        { label: 'Quit', shortcut: 'Ctrl+Q', onClick: () => { if (confirm('Quit RiddimSync?')) window.close(); } },
       ],
     },
     {
@@ -547,11 +626,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
     {
       label: 'Help',
       items: [
-        { label: 'Documentation',      onClick: () => window.open('https://github.com/shantileemedia-developer/studiodesk', '_blank') },
+        { label: 'Documentation',      onClick: () => window.open('https://github.com/shantileemedia-developer/riddimSync', '_blank') },
         { label: 'Video Tutorials',    onClick: () => toast('Video tutorials coming soon.') },
         { separator: true, label: '' },
-        { label: 'Check for Updates…', onClick: () => window.open('https://github.com/shantileemedia-developer/studiodesk/releases', '_blank') },
-        { label: 'About StudioDESK',   onClick: () => setShowAbout(true) },
+        { label: 'Check for Updates…', onClick: () => window.open('https://github.com/shantileemedia-developer/riddimSync/releases', '_blank') },
+        { label: 'About RiddimSync',   onClick: () => setShowAbout(true) },
       ],
     },
   ];
@@ -600,7 +679,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
     <>
       <div className="menu-bar" ref={barRef}>
         <div className="menu-bar-logo">
-          <span className="menu-bar-brand">StudioDESK</span>
+          <span className="menu-bar-brand">RiddimSync</span>
         </div>
 
         <div className="menu-bar-menus">
@@ -699,7 +778,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
       {showAbout && (
         <div className="menu-modal-overlay" onClick={() => setShowAbout(false)}>
           <div className="menu-modal" onClick={e => e.stopPropagation()}>
-            <h2 className="menu-modal-title">StudioDESK</h2>
+            <h2 className="menu-modal-title">RiddimSync</h2>
             <p className="menu-modal-version">Version {__APP_VERSION__}</p>
             <p style={{ color: '#aaa', marginTop: 8 }}>
               Professional audio collaboration for recording engineers and artists.<br />

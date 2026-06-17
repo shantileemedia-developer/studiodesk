@@ -109,12 +109,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
 
   const handleSendArtistEmail = async (c: ArtistCode) => {
     if (!c.assigned_email) return;
-    const subject = 'Your StudioDESK Artist Code';
+    const subject = 'Your RiddimSync Artist Code';
     const body =
       `Hi${c.label ? ` ${c.label}` : ''},\n\n` +
-      `Your StudioDESK Artist Code is:\n\n    ${c.code}\n\n` +
+      `Your RiddimSync Artist Code is:\n\n    ${c.code}\n\n` +
       `To get started:\n` +
-      `1. Download or open StudioDESK\n` +
+      `1. Download or open RiddimSync\n` +
       `2. Create an account using this exact email address (${c.assigned_email})\n` +
       `3. On the signup form, enter your code above — it links permanently to your account\n\n` +
       `See you in the session.`;
@@ -137,13 +137,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
   };
 
   const handleSendEngineerEmail = async (inv: EngineerInvite) => {
-    const subject = "You've been invited to StudioDESK";
+    const subject = "You've been invited to RiddimSync";
     const body =
       `Hi${inv.label ? ` ${inv.label}` : ''},\n\n` +
-      `You've been invited to join StudioDESK as an engineer.\n\n` +
+      `You've been invited to join RiddimSync as an engineer.\n\n` +
       `Your invite code is:\n\n    ${inv.code}\n\n` +
       `To get started:\n` +
-      `1. Download or open StudioDESK\n` +
+      `1. Download or open RiddimSync\n` +
       `2. Create an account using this exact email address (${inv.email})\n` +
       `3. Select the Engineer role and enter your invite code above\n\n` +
       `See you in the session.`;
@@ -261,7 +261,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
           <div className="admin-header-left">
             <h2>Studio Admin</h2>
             <span className="admin-subtitle">
-              Manage who can access StudioDESK. Artists need a code; engineers need an invite.
+              Manage who can access RiddimSync. Artists need a code; engineers need an invite.
             </span>
           </div>
           <div className="admin-header-actions">

@@ -20,17 +20,19 @@ const formatDuration = (secs: number): string => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
-const formatDate = (date: Date): string => {
-  const now  = new Date();
-  const diff = now.getTime() - date.getTime();
+const formatDate = (date: Date | string): string => {
+  // createdAt arrives as an ISO string when hydrated from the network or DB
+  const d   = date instanceof Date ? date : new Date(date);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
   if (diff < 60000)    return 'Just now';
   if (diff < 3600000)  return `${Math.floor(diff / 60000)}m ago`;
-  if (date.toDateString() === now.toDateString())
-    return `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  return date.toLocaleDateString();
+  if (d.toDateString() === now.toDateString())
+    return `Today ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return d.toLocaleDateString();
 };
 
-const MediaPoolPanel = () => {
+const MediaPoolPanel = ({ onClose }: { onClose?: () => void }) => {
   const { state, dispatch, audioDirHandle, retryUploadRef, userRole } = useDaw();
   const { poolItems, regions } = state;
 
@@ -217,7 +219,7 @@ const MediaPoolPanel = () => {
 
     setExporting(true);
     const zip    = new JSZip();
-    const folder = zip.folder('StudioDESK_Export')!;
+    const folder = zip.folder('RiddimSync_Export')!;
     let   fmt    = 'flac';
 
     for (let i = 0; i < toExport.length; i++) {
@@ -330,6 +332,9 @@ const MediaPoolPanel = () => {
             </button>
           )}
           <FolderOpen size={13} className="pool-icon" />
+          {onClose && (
+            <button className="panel-close-btn" onClick={onClose} title="Close Media Pool">×</button>
+          )}
         </div>
       </div>
 
@@ -520,9 +525,11 @@ const MediaPoolPanel = () => {
             <button className="pool-ctx-item" onClick={e => { handleDelete(e, item); setCtxMenu(null); }}>
               Delete from Pool
             </button>
-            <button className="pool-ctx-item danger" onClick={() => handleDeleteFromPc(item)}>
-              Delete from PC
-            </button>
+            {userRole === 'artist' && (
+              <button className="pool-ctx-item danger" onClick={() => handleDeleteFromPc(item)}>
+                Delete from PC
+              </button>
+            )}
           </div>
         );
       })()}

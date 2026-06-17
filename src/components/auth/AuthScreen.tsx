@@ -263,7 +263,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, passwordResetMode }) =
   const Brand = () => (
     <div className="auth-brand">
       <Activity size={28} color="#00ffcc" />
-      <span>StudioDESK</span>
+      <span>RiddimSync</span>
     </div>
   );
 
@@ -544,7 +544,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, passwordResetMode }) =
           </button>
         </form>
         <div className="auth-footer">
-          New to StudioDESK?{' '}
+          New to RiddimSync?{' '}
           <button className="auth-link" onClick={() => resetForm('signup-role')}>Create account</button>
         </div>
         <SupportFooter />

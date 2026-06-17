@@ -415,6 +415,7 @@ export const useNativeAudioEngine = () => {
     punchWritingRef.current = false;
     stopAnimLoop();
     stopMetronome();
+    if (isRecordingRef.current) await stopRecordingSessionRef.current?.();
     await eng()?.stop();
     dispatch({ type: 'SET_PLAYING', payload: false });
   }, [stopAnimLoop, stopMetronome, dispatch]);
@@ -425,6 +426,7 @@ export const useNativeAudioEngine = () => {
     punchWritingRef.current = false;
     stopAnimLoop();
     stopMetronome();
+    if (isRecordingRef.current) await stopRecordingSessionRef.current?.();
     await eng()?.stop();
     currentTimeRef.current = 0;
     dispatch({ type: 'SET_PLAYING', payload: false });
@@ -456,14 +458,15 @@ export const useNativeAudioEngine = () => {
   const stopRecordingSession = useCallback(async () => {
     if (!isRecordingRef.current) return;
     isRecordingRef.current = false;
+    console.log('[REC 1] stopRecordingSession — stopping native engine');
     dispatch({ type: 'SET_RECORDING', payload: false });
 
     await eng()?.stopMonitoring();
-    await eng()?.stop();
     const result = await eng()?.stopRecording();
-    if (!result) return;
+    if (!result) { console.log('[REC ERROR] stopRecording returned no result'); return; }
 
     const { filePath, duration } = result;
+    console.log('[REC 2] Native engine stopped — filePath:', filePath, 'duration:', duration);
     const trackId     = armedTrackIdRef.current!;
     const trackObj    = state.tracks.find(t => t.id === trackId);
     const trackName   = trackObj?.name ?? 'Track';
@@ -472,26 +475,32 @@ export const useNativeAudioEngine = () => {
     const audioUrl    = `file://${filePath}`;
     const poolItemId  = `pool_${Date.now()}`;
 
-    let peaks:  number[] = [];
-    let peaksR: number[] | null = null;
+    let peaks:      number[] = [];
+    let peaksR:     number[] | null = null;
+    let uploadBlob: Blob | null = null;
     try {
+      console.log('[REC 3] Fetching recorded file for decode + peaks');
       const resp   = await fetch(audioUrl);
       const ab     = await resp.arrayBuffer();
+      console.log('[REC 4] File fetched — bytes:', ab.byteLength);
+      uploadBlob   = new Blob([ab]);  // capture before decodeAudioData may detach ab
       const tmpCtx = new AudioContext();
       const buf    = await tmpCtx.decodeAudioData(ab);
       await tmpCtx.close();
+      console.log('[REC 5] Audio decoded — channels:', buf.numberOfChannels, 'samples:', buf.length);
       const stereo = await generatePeaksStereo(buf);
       peaks  = stereo.left;
       peaksR = trackObj?.type === 'stereo' ? stereo.right : null;
-    } catch { /* peaks stay empty */ }
+      console.log('[REC 6] Waveform generated — left:', peaks.length, 'right:', peaksR?.length ?? 0);
+    } catch (err) { console.error('[REC ERROR] Decode/peaks failed:', err); }
 
-    uploadAudioToSupabase(
-      await fetch(audioUrl).then(r => r.blob()),
-      `${takeName}.wav`,
-    ).then(({ publicUrl }) => {
+    console.log('[REC 7] Starting Supabase upload — blob size:', uploadBlob?.size ?? 'fallback fetch');
+    const blobForUpload: Blob = uploadBlob !== null ? uploadBlob : await fetch(audioUrl).then(r => r.blob());
+    uploadAudioToSupabase(blobForUpload, `${takeName}.wav`).then(({ publicUrl }) => {
+      console.log('[REC 11] Upload complete — dispatching UPDATE_AUDIO_URLS');
       if (publicUrl !== audioUrl)
         dispatch({ type: 'UPDATE_AUDIO_URLS', payload: { poolItemId, audioUrl: publicUrl } });
-    }).catch(() => {});
+    }).catch((err) => { console.error('[REC ERROR] Upload failed:', err); });
 
     const poolItem: PoolItem = {
       id: poolItemId, name: takeName, audioUrl,
@@ -513,8 +522,11 @@ export const useNativeAudioEngine = () => {
       ...(({ localFilePath: filePath }) as any),
     };
 
+    console.log('[REC 8] Dispatching ADD_POOL_ITEM — id:', poolItemId);
     dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
+    console.log('[REC 9] ADD_POOL_ITEM dispatched — dispatching ADD_REGION');
     dispatch({ type: 'ADD_REGION',    payload: region });
+    console.log('[REC 10] ADD_REGION dispatched — stopRecordingSession complete');
   }, [state.tracks, state.poolItems, dispatch]);
 
   stopRecordingSessionRef.current = stopRecordingSession;

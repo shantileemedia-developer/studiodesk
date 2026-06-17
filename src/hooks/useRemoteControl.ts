@@ -5,10 +5,17 @@ const isElectron = typeof window !== 'undefined' && !!window.studioRC;
 
 // ── Artist-side: receive and execute input from engineer ─────────────────────
 
-export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop' = 'desktop') => {
-  const capturedElementRef = useRef<Element | null>(null);
-  const screenSizeRef      = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
-  const hasDraggedRef      = useRef(false);
+export const useRemoteControlReplay = (
+  isActive: boolean,
+  mode: 'app' | 'desktop' = 'desktop',
+  onInjectionError?: (err: unknown) => void,
+) => {
+  const capturedElementRef  = useRef<Element | null>(null);
+  const screenSizeRef       = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const hasDraggedRef       = useRef(false);
+  const prevHoverTargetRef  = useRef<Element | null>(null);
+  const onInjectionErrorRef = useRef(onInjectionError);
+  useEffect(() => { onInjectionErrorRef.current = onInjectionError; }, [onInjectionError]);
 
   // Fetch screen size eagerly on mount so it's ready before the first RC event arrives.
   // Also re-fetch whenever RC activates in case the display changed.
@@ -27,7 +34,10 @@ export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop
   }, [isActive]);
 
   useEffect(() => {
-    if (!isActive) capturedElementRef.current = null;
+    if (!isActive) {
+      capturedElementRef.current = null;
+      prevHoverTargetRef.current = null;
+    }
   }, [isActive]);
 
   const replayEvent = useCallback((event: RemoteInputEvent) => {
@@ -37,24 +47,37 @@ export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop
     // App Control uses DOM dispatch (below) so coords map to app viewport, not screen.
     if (isElectron && screenSizeRef.current && mode === 'desktop') {
       const { width, height } = screenSizeRef.current;
+      const eventType = event.type;
+
+      // Unified inject: logs success/failure so silent drops are visible.
+      const inject = (payload: OsInputEvent) => {
+        window.studioRC.injectInput(payload)
+          .then(() => {
+            if (eventType !== 'pointermove') console.log('[OS_INPUT_INJECTED]', eventType);
+          })
+          .catch((err: unknown) => {
+            console.log('[OS_INPUT_FAILED]', eventType, err);
+            onInjectionErrorRef.current?.(err);
+          });
+      };
 
       if (event.type === 'keydown') {
-        window.studioRC.injectInput({
+        inject({
           type: 'key-down',
           key:  event.key,
           code: event.code,
           modifiers: { ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey, meta: event.metaKey },
-        }).catch(() => {});
+        });
         return;
       }
 
       if (event.type === 'keyup') {
-        window.studioRC.injectInput({
+        inject({
           type: 'key-up',
           key:  event.key,
           code: event.code,
           modifiers: { ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey, meta: event.metaKey },
-        }).catch(() => {});
+        });
         return;
       }
 
@@ -68,29 +91,29 @@ export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop
 
       switch (pe.type) {
         case 'pointermove':
-          window.studioRC.injectInput({ type: 'mouse-move', x, y }).catch(() => {});
+          inject({ type: 'mouse-move', x, y });
           break;
         case 'pointerdown':
-          window.studioRC.injectInput({ type: 'mouse-down', x, y, button: btn }).catch(() => {});
+          inject({ type: 'mouse-down', x, y, button: btn });
           break;
         case 'pointerup':
-          window.studioRC.injectInput({ type: 'mouse-up', x, y, button: btn }).catch(() => {});
+          inject({ type: 'mouse-up', x, y, button: btn });
           break;
         case 'click':
-          window.studioRC.injectInput({ type: 'mouse-click', x, y, button: btn }).catch(() => {});
+          inject({ type: 'mouse-click', x, y, button: btn });
           break;
         case 'dblclick':
-          window.studioRC.injectInput({ type: 'mouse-click', x, y, button: btn, double: true }).catch(() => {});
+          inject({ type: 'mouse-click', x, y, button: btn, double: true });
           break;
         case 'contextmenu':
-          window.studioRC.injectInput({ type: 'mouse-click', x, y, button: 'right' }).catch(() => {});
+          inject({ type: 'mouse-click', x, y, button: 'right' });
           break;
         case 'wheel':
-          window.studioRC.injectInput({
+          inject({
             type: 'scroll', x, y,
             deltaX: (pe as any).deltaX,
             deltaY: (pe as any).deltaY,
-          }).catch(() => {});
+          });
           break;
       }
       return;
@@ -98,13 +121,32 @@ export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop
 
     // ── Browser fallback: DOM event replay (original implementation) ──────
     if (event.type === 'keydown' || event.type === 'keyup') {
-      document.dispatchEvent(new KeyboardEvent(event.type, {
+      // Target the focused element (e.g. tempo input) so React's onKeyDown fires
+      // there. Falls back to document when no input is focused (global shortcuts).
+      const ae = document.activeElement;
+      const kbTarget = (ae && ae !== document.body && ae !== document.documentElement)
+        ? ae
+        : document;
+      kbTarget.dispatchEvent(new KeyboardEvent(event.type, {
         bubbles: true, cancelable: true,
         key: event.key, code: event.code,
         ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
         altKey: event.altKey, metaKey: event.metaKey,
         repeat: event.repeat,
       }));
+      return;
+    }
+
+    // ── Input value sync: set React controlled input value directly ──────────
+    if (event.type === 'input-value') {
+      const iv = event as Extract<RemoteInputEvent, { type: 'input-value' }>;
+      const el = document.elementFromPoint(iv.nx * window.innerWidth, iv.ny * window.innerHeight);
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        const proto = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        nativeSetter?.call(el, iv.value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
       return;
     }
 
@@ -127,6 +169,29 @@ export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop
       hasDraggedRef.current = true;
     } else if (event.type === 'pointerup') {
       capturedElementRef.current = null;
+    }
+
+    // Hover tracking: dispatch mouseover/mouseout when the pointer enters a new
+    // element so React's onMouseEnter/Leave fires for hover-triggered UI like the
+    // tempo and time-signature popovers. Skip during captured drags (target won't
+    // change while capturedElementRef is set anyway).
+    if (pe.type === 'pointermove') {
+      const prev = prevHoverTargetRef.current;
+      if (prev !== target) {
+        if (prev) {
+          prev.dispatchEvent(new MouseEvent('mouseout', {
+            bubbles: true, cancelable: true,
+            clientX: cssX, clientY: cssY,
+            relatedTarget: target,
+          }));
+        }
+        target.dispatchEvent(new MouseEvent('mouseover', {
+          bubbles: true, cancelable: true,
+          clientX: cssX, clientY: cssY,
+          relatedTarget: prev,
+        }));
+        prevHoverTargetRef.current = target;
+      }
     }
 
     const origSet     = Element.prototype.setPointerCapture;
@@ -183,6 +248,11 @@ export const useRemoteControlReplay = (isActive: boolean, mode: 'app' | 'desktop
             clientX: cssX, clientY: cssY,
             button: a.button,
           }));
+          // Focus inputs/textareas so forwarded keystrokes land in the right element.
+          // dispatchEvent('click') alone does not trigger browser-native focus.
+          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+            (target as HTMLInputElement | HTMLTextAreaElement).focus();
+          }
         }
         if (pe.type === 'pointerup') hasDraggedRef.current = false;
       }

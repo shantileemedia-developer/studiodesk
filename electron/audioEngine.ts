@@ -646,10 +646,16 @@ export class NativeAudioEngine extends EventEmitter {
     this.stopMonitoring();
   }
 
-  // ── Takes folder ──────────────────────────────────────────────────────────
+  // ── Takes / project Audio folder ─────────────────────────────────────────
+
+  private static _audioDir: string | null = null;
+
+  static setAudioDir(dir: string): void {
+    NativeAudioEngine._audioDir = dir;
+  }
 
   static getTakesDir(): string {
-    return path.join(app.getPath('userData'), 'Takes');
+    return NativeAudioEngine._audioDir ?? path.join(app.getPath('userData'), 'Takes');
   }
 
   static getTakePath(name: string): string {

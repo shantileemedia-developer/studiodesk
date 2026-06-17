@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Play, Square, Circle, SkipBack, SkipForward, Repeat,
-  Activity, LayoutPanelLeft, LayoutPanelTop, Radio, ChevronUp, ChevronDown,
+  Activity, LayoutPanelLeft, LayoutPanelTop, PanelRight, Radio, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
 import './TransportPanel.css';
@@ -155,10 +155,12 @@ const SigPopover: React.FC<{ sig: [number,number]; onClose: () => void; onCommit
 interface TransportPanelProps {
   toggleInspector: () => void;
   toggleMixer: () => void;
+  toggleMediaPool: () => void;
   onPlay: () => void;
   onStop: () => void;
   onReturnToZero: () => void;
   onRecord: () => void;
+  onStopRecording?: () => void;
   userRole?: 'artist' | 'engineer';
   isStreaming?: boolean;
   isReceiving?: boolean;
@@ -182,7 +184,7 @@ const toBarsBeats = (seconds: number, tempo: number): string => {
 };
 
 const TransportPanel: React.FC<TransportPanelProps> = ({
-  toggleInspector, toggleMixer, onPlay, onStop, onReturnToZero, onRecord,
+  toggleInspector, toggleMixer, toggleMediaPool, onPlay, onStop, onReturnToZero, onRecord, onStopRecording,
   userRole, isStreaming = false, isReceiving = false, onToggleStream,
 }) => {
   const { state, dispatch, currentTimeRef } = useDaw();
@@ -237,6 +239,9 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
           <button className="transport-btn layout-btn" onClick={toggleMixer} title="Toggle Mixer">
             <LayoutPanelTop size={18} />
           </button>
+          <button className="transport-btn layout-btn" onClick={toggleMediaPool} title="Toggle Media Pool">
+            <PanelRight size={18} />
+          </button>
         </div>
 
         {/* Playback buttons */}
@@ -265,7 +270,7 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
           </button>
           <button
             className={`transport-btn record-btn ${isRecording ? 'active' : ''}`}
-            onClick={isRecording ? onStop : onRecord}
+            onClick={isRecording ? (onStopRecording ?? onStop) : onRecord}
             title={isRecording ? 'Stop Recording' : 'Record'}
           >
             <Circle size={16} fill="currentColor" />

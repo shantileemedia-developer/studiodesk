@@ -1,6 +1,6 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Video, Mic, MicOff, VideoOff, Minimize2, X, PhoneCall, MessageSquare, MonitorPlay, MonitorX, Smile, SendHorizonal } from 'lucide-react';
+import { Video, Mic, MicOff, VideoOff, Minimize2, X, PhoneCall, MessageSquare, MonitorPlay, Smile, SendHorizonal } from 'lucide-react';
 
 const EMOJIS: Record<string, string[]> = {
   '😀': ['😀','😂','🤣','😍','🥹','😎','🤔','😅','🥺','😭','😤','🤯','🥳','😴','🤩','😬','🙄','😏','😒','🤗','😇','🫡','🤫','😶','🤐'],
@@ -8,16 +8,30 @@ const EMOJIS: Record<string, string[]> = {
   '🎵': ['🎵','🎶','🎸','🥁','🎹','🎤','🎧','🎼','🎷','🎺','🎻','🪗','🎙️','📻','🔊','🔇','🎚️','🎛️','💿','🎬'],
 };
 import { useWebRTC } from '../../hooks/useWebRTC';
-import type { RemoteInputEvent } from '../../types/remote';
+import type { RemoteInputEvent, RcPermissionGrant } from '../../types/remote';
 import './FloatingVideoChat.css';
+
+export interface FloatingVideoChatHandle {
+  revokeDawControl: () => void;
+  revokeDesktopControl: () => void;
+}
 
 interface FloatingVideoChatProps {
   userRole: 'artist' | 'engineer';
   userId: string;
   roomCode: string;
-  onInputEvent?: (event: RemoteInputEvent) => void;
+  onInputEvent?: (event: RemoteInputEvent, source: 'app' | 'desktop') => void;
   onRcStateChange?: (active: boolean, sendFn: ((e: RemoteInputEvent) => void) | null, viewOnly: boolean) => void;
+  /** App RC: called when the App RC session activates/deactivates; sendFn is the channel send function */
   onAppRcChange?: (active: boolean, sendFn: ((e: RemoteInputEvent) => void) | null) => void;
+  /** When true the engineer's App RC connection starts automatically */
+  dawControlActive?: boolean;
+  /** Called on artist side after they grant DAW control via the unified consent modal */
+  onDawControlGranted?: () => void;
+  /** Called on both sides when DAW control is revoked */
+  onDawControlRevoked?: () => void;
+  /** When true, mutes the incoming call audio (artist voice) — used for MIX-only monitor mode */
+  muteCallAudio?: boolean;
   /** Stable refs from DawContext — passed as props to avoid context subscription inside this component */
   masterStreamRef: React.MutableRefObject<MediaStreamAudioDestinationNode | null>;
   audioCtxRef: React.MutableRefObject<AudioContext | null>;
@@ -97,10 +111,11 @@ interface VideoGridProps {
   showLocalCam: boolean;
   setShowLocalCam: (v: boolean) => void;
   userRole: 'artist' | 'engineer';
+  muteCallAudio?: boolean;
 }
 
 const VideoGrid: React.FC<VideoGridProps> = memo(({
-  callActive, remoteStream, localStream, previewStream, isCalling, showLocalCam, setShowLocalCam, userRole,
+  callActive, remoteStream, localStream, previewStream, isCalling, showLocalCam, setShowLocalCam, userRole, muteCallAudio,
 }) => {
   const remoteVidRef  = useRef<HTMLVideoElement>(null);
   const localVidRef   = useRef<HTMLVideoElement>(null);
@@ -111,6 +126,11 @@ const VideoGrid: React.FC<VideoGridProps> = memo(({
   useEffect(() => {
     if (remoteVidRef.current)  remoteVidRef.current.srcObject  = remoteStream  ?? null;
   }, [remoteStream]);
+
+  // MIX-only monitor mode: mute the incoming call voice without ending the call
+  useEffect(() => {
+    if (remoteVidRef.current) remoteVidRef.current.muted = muteCallAudio ?? false;
+  }, [muteCallAudio]);
 
   useEffect(() => {
     if (localVidRef.current)   localVidRef.current.srcObject   = localStream   ?? null;
@@ -165,23 +185,159 @@ const VideoGrid: React.FC<VideoGridProps> = memo(({
 });
 
 // ── Desktop Control: full-screen overlay on the engineer's side ──────────────
-// The video fills the entire window so mouse coords (normalized by window.innerWidth/Height
-// in RemoteControlOverlay) map 1:1 to the artist's screen coordinates fed into nut-js.
-// object-fit: fill eliminates letterboxing so there are no dead zones at the edges.
+// Captures all pointer + keyboard events locally and normalises coordinates
+// relative to the video's visible content area (object-fit: contain with
+// letterbox bars). This gives AnyDesk-style 1:1 mapping without distortion.
 interface DesktopControlFullscreenProps {
   stream: MediaStream;
   onExit: () => void;
   onStop: () => void;
+  onSendInput: (e: RemoteInputEvent) => void;
 }
-const DesktopControlFullscreen: React.FC<DesktopControlFullscreenProps> = ({ stream, onExit, onStop }) => {
+const DesktopControlFullscreen: React.FC<DesktopControlFullscreenProps> = ({ stream, onExit, onStop, onSendInput }) => {
   const vidRef = useRef<HTMLVideoElement>(null);
+  const onSendInputRef = useRef(onSendInput);
+  const onExitRef = useRef(onExit);
+  useEffect(() => { onSendInputRef.current = onSendInput; }, [onSendInput]);
+  useEffect(() => { onExitRef.current = onExit; }, [onExit]);
+
   useEffect(() => {
     if (vidRef.current) vidRef.current.srcObject = stream;
   }, [stream]);
+
+  // Map event clientX/Y to [0,1] normalized relative to the actual video content
+  // area (accounting for letterbox/pillarbox bars from object-fit: contain).
+  const normCoords = useCallback((clientX: number, clientY: number) => {
+    const vid = vidRef.current;
+    if (!vid || !vid.videoWidth || !vid.videoHeight) {
+      return { nx: clientX / window.innerWidth, ny: clientY / window.innerHeight };
+    }
+    const elW = vid.clientWidth;
+    const elH = vid.clientHeight;
+    const videoAspect = vid.videoWidth / vid.videoHeight;
+    const elAspect = elW / elH;
+    let contentW: number, contentH: number, offsetX: number, offsetY: number;
+    if (videoAspect > elAspect) {
+      // Wider video: black bars top + bottom
+      contentW = elW;
+      contentH = elW / videoAspect;
+      offsetX = 0;
+      offsetY = (elH - contentH) / 2;
+    } else {
+      // Taller video: black bars left + right
+      contentH = elH;
+      contentW = elH * videoAspect;
+      offsetX = (elW - contentW) / 2;
+      offsetY = 0;
+    }
+    return {
+      nx: Math.max(0, Math.min(1, (clientX - offsetX) / contentW)),
+      ny: Math.max(0, Math.min(1, (clientY - offsetY) / contentH)),
+    };
+  }, []);
+
+  // rAF-throttled pointermove
+  const pendingMoveRef = useRef<RemoteInputEvent | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+
+  const isOnHud = (e: React.SyntheticEvent) =>
+    !!(e.target as HTMLElement).closest('[data-desktop-hud]');
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const { nx, ny } = normCoords(e.clientX, e.clientY);
+    pendingMoveRef.current = { type: 'pointermove', nx, ny, button: e.button, buttons: e.buttons };
+    if (!rafIdRef.current) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (pendingMoveRef.current) onSendInputRef.current(pendingMoveRef.current);
+        pendingMoveRef.current = null;
+        rafIdRef.current = null;
+      });
+    }
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (isOnHud(e)) return;
+    e.stopPropagation();
+    const { nx, ny } = normCoords(e.clientX, e.clientY);
+    console.log('[ENGINEER_INPUT_CAPTURED] pointerdown', { nx: nx.toFixed(3), ny: ny.toFixed(3), button: e.button });
+    onSendInputRef.current({ type: 'pointerdown', nx, ny, button: e.button, buttons: e.buttons });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (isOnHud(e)) return;
+    e.stopPropagation();
+    const { nx, ny } = normCoords(e.clientX, e.clientY);
+    console.log('[ENGINEER_INPUT_CAPTURED] pointerup', { nx: nx.toFixed(3), ny: ny.toFixed(3), button: e.button });
+    onSendInputRef.current({ type: 'pointerup', nx, ny, button: e.button, buttons: 0 });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (isOnHud(e)) return;
+    const { nx, ny } = normCoords(e.clientX, e.clientY);
+    console.log('[ENGINEER_INPUT_CAPTURED] wheel', { deltaX: e.deltaX.toFixed(1), deltaY: e.deltaY.toFixed(1) });
+    onSendInputRef.current({ type: 'wheel', nx, ny, deltaX: e.deltaX, deltaY: e.deltaY });
+  };
+
+  const handleDblClick = (e: React.MouseEvent) => {
+    if (isOnHud(e)) return;
+    e.stopPropagation();
+    const { nx, ny } = normCoords(e.clientX, e.clientY);
+    console.log('[ENGINEER_INPUT_CAPTURED] dblclick', { nx: nx.toFixed(3), ny: ny.toFixed(3) });
+    onSendInputRef.current({ type: 'dblclick', nx, ny, button: e.button });
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (isOnHud(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { nx, ny } = normCoords(e.clientX, e.clientY);
+    console.log('[ENGINEER_INPUT_CAPTURED] contextmenu', { nx: nx.toFixed(3), ny: ny.toFixed(3) });
+    onSendInputRef.current({ type: 'contextmenu', nx, ny, button: e.button });
+  };
+
+  // Keyboard: window capture phase — fires first, stopImmediatePropagation prevents
+  // any other capture-phase keyboard listener (e.g. DawWorkspace shortcuts) from firing.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.stopImmediatePropagation();
+      if (e.key === 'Escape') { onExitRef.current(); return; }
+      console.log('[ENGINEER_INPUT_CAPTURED] keydown', e.key);
+      onSendInputRef.current({
+        type: 'keydown', key: e.key, code: e.code,
+        ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey,
+        repeat: e.repeat,
+      });
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.stopImmediatePropagation();
+      if (e.key === 'Escape') return;
+      console.log('[ENGINEER_INPUT_CAPTURED] keyup', e.key);
+      onSendInputRef.current({
+        type: 'keyup', key: e.key, code: e.code,
+        ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey,
+        repeat: false,
+      });
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null; }
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
+  }, []);
+
   return createPortal(
-    <div className="desktop-control-fullscreen">
+    <div
+      className="desktop-control-fullscreen"
+      onPointerMove={handlePointerMove}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onWheel={handleWheel}
+      onDoubleClick={handleDblClick}
+      onContextMenu={handleContextMenu}
+    >
       <video ref={vidRef} autoPlay playsInline muted className="desktop-control-video" />
-      {/* data-desktop-hud: RemoteControlOverlay excludes events on these elements */}
       <div className="desktop-control-hud" data-desktop-hud="">
         <div className="desktop-control-hud-label">
           <span className="desktop-hud-dot" />
@@ -218,9 +374,11 @@ const DesktopStreamPreview: React.FC<DesktopStreamPreviewProps> = ({ stream, onF
   );
 };
 
-const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
-  userRole, userId, roomCode, onInputEvent, onRcStateChange, onAppRcChange, masterStreamRef, audioCtxRef,
-}) => {
+const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatProps>(({
+  userRole, userId, roomCode, onInputEvent, onRcStateChange, onAppRcChange,
+  dawControlActive, onDawControlGranted, onDawControlRevoked, muteCallAudio,
+  masterStreamRef, audioCtxRef,
+}, ref) => {
   const [isMinimized, setIsMinimized] = useState(true);
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState('');
@@ -231,8 +389,10 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 320, height: 0 });
   const [monitorVolume, setMonitorVolume] = useState(0.7);
   const [rcDenied, setRcDenied] = useState(false);
-  const [rcAudioDeviceConsent, setRcAudioDeviceConsent] = useState(false);
+  const [rcDesktopGrant, setRcDesktopGrant] = useState<'none' | 'view' | 'full'>('full');
+  const [rcDawGrant, setRcDawGrant] = useState(true);
   const [desktopFullscreen, setDesktopFullscreen] = useState(false);
+  const [showDesktopPanel, setShowDesktopPanel] = useState(false);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const [showLocalCam, setShowLocalCam] = useState(true);
   const previewStreamRef = useRef<MediaStream | null>(null);
@@ -258,14 +418,13 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     incomingCall, isCalling, callerId, messages,
     ring, acceptCall, declineCall, sendMessage,
     endCall, toggleMic, toggleVideo,
-    appRcReady,
     rcRequested, rcActive,
     rcEngineerName, rcViewOnly,
-    requestRemoteControl, stopRemoteControl,
-    respondToRcPermission,
-    startAppRc, stopAppRc,
+    requestRemoteControl, revokeRemoteControl, stopRemoteControl,
+    respondToRcPermission, revokeDawControl,
     sendInputEvent, syncDawStream,
     switchCallAudioBus, activeCallBus,
+    appRcActive, startAppRc, stopAppRc, sendAppRcInput, signalChannelReady,
   } = useWebRTC({
     roomCode,
     userId,
@@ -278,6 +437,8 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
       return null;
     },
     onInputEvent,
+    onDawControlGranted,
+    onDawControlRevoked,
   });
 
   // ── Video refs — always mounted so srcObject is never lost ───────────────
@@ -361,16 +522,62 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
 
   useEffect(() => { if (!rcRequested) setRcDenied(false); }, [rcRequested]);
 
-  // Exit fullscreen when RC ends
-  useEffect(() => { if (!rcActive) setDesktopFullscreen(false); }, [rcActive]);
+  // Expose control functions to parent via ref
+  useImperativeHandle(ref, () => ({
+    revokeDawControl,
+    revokeDesktopControl: revokeRemoteControl,
+  }), [revokeDawControl, revokeRemoteControl]);
+
+  // Exit fullscreen and hide desktop panel when RC ends
+  useEffect(() => {
+    if (!rcActive) {
+      setDesktopFullscreen(false);
+      setShowDesktopPanel(false);
+    }
+  }, [rcActive]);
+
+  // Cleanup RC on unmount (engineer session end / phase change).
+  // Prevents orphaned RTCPeerConnections and dangling screen-capture tracks.
+  useEffect(() => {
+    return () => {
+      if (rcActive) stopRemoteControl();
+      stopAppRc();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Un-minimise the widget when Desktop RC activates so the controls are accessible.
+  // Do NOT auto-enter fullscreen — engineer chooses when to open the desktop view.
+  useEffect(() => {
+    if (rcActive && remoteDesktopStream) {
+      setIsMinimized(false);
+    }
+  }, [rcActive, remoteDesktopStream]);
 
   useEffect(() => {
     onRcStateChange?.(rcActive, rcActive ? sendInputEvent : null, rcViewOnly);
   }, [rcActive, sendInputEvent, onRcStateChange, rcViewOnly]);
 
   useEffect(() => {
-    onAppRcChange?.(appRcReady, appRcReady ? sendInputEvent : null);
-  }, [appRcReady, sendInputEvent, onAppRcChange]);
+    onAppRcChange?.(appRcActive, appRcActive ? sendAppRcInput : null);
+  }, [appRcActive, sendAppRcInput, onAppRcChange]);
+
+  // App RC lifecycle tied to DAW control.
+  // Engineer: start when DAW control is granted AND signal channel is subscribed (avoids the
+  //           race where the offer is sent before Supabase has confirmed subscription).
+  //           Restarts automatically if the WebRTC connection drops mid-session.
+  // Artist:   tear down local side immediately when DAW control ends.
+  useEffect(() => {
+    if (userRole === 'engineer') {
+      if (dawControlActive && !appRcActive && signalChannelReady) {
+        startAppRc();
+      } else if (!dawControlActive) {
+        stopAppRc();
+      }
+    } else {
+      if (!dawControlActive) stopAppRc();
+    }
+  }, [dawControlActive, appRcActive, signalChannelReady, userRole, startAppRc, stopAppRc]);
 
   // Artist: ensure the DAW master-out track is in the live peer connection.
   // Called when the call becomes active AND again after a short delay in case
@@ -492,41 +699,64 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
     document.body,
   ) : null;
 
-  // ── Desktop Control consent dialog — fullscreen portal, shown to artist on request ─
+  // ── Unified access consent dialog — shown to artist when engineer requests access ─
   const rcConsentModal = rcRequested && !rcDenied && userRole === 'artist' ? createPortal(
     <div className="rc-consent-overlay">
       <div className="rc-consent-card">
         <div className="rc-consent-monitor-icon">
           <MonitorPlay size={32} color="#ff7744" />
         </div>
-        <h3 className="rc-consent-title">Desktop Control Request</h3>
+        <h3 className="rc-consent-title">Remote Access Request</h3>
         <p className="rc-consent-body">
-          <strong>{rcEngineerName}</strong> is requesting <strong>Desktop Control</strong> of your computer.
+          <strong>{rcEngineerName}</strong> is requesting remote session access.
         </p>
-        <p className="rc-consent-warning">
-          This grants OS-level access — the engineer can see and control your entire screen,
-          including applications outside the DAW. You can revoke at any time.
-        </p>
-        <label className="rc-audio-consent-row">
-          <input
-            type="checkbox"
-            checked={rcAudioDeviceConsent}
-            onChange={e => setRcAudioDeviceConsent(e.target.checked)}
-          />
-          <span>Allow engineer to modify audio device settings</span>
-        </label>
+
+        <div className="rc-consent-section">
+          <div className="rc-consent-section-label">Desktop Access</div>
+          <div className="rc-consent-radio-group">
+            <label className="rc-consent-radio-label">
+              <input type="radio" name="rc-desktop" value="none"
+                checked={rcDesktopGrant === 'none'} onChange={() => setRcDesktopGrant('none')} />
+              No desktop access
+            </label>
+            <label className="rc-consent-radio-label">
+              <input type="radio" name="rc-desktop" value="view"
+                checked={rcDesktopGrant === 'view'} onChange={() => setRcDesktopGrant('view')} />
+              Screen view only
+            </label>
+            <label className="rc-consent-radio-label">
+              <input type="radio" name="rc-desktop" value="full"
+                checked={rcDesktopGrant === 'full'} onChange={() => setRcDesktopGrant('full')} />
+              Full desktop control
+            </label>
+          </div>
+          {rcDesktopGrant === 'full' && (
+            <p className="rc-consent-hint">
+              Engineer can see and control your entire screen, including apps outside the DAW.
+            </p>
+          )}
+        </div>
+
+        <div className="rc-consent-section">
+          <div className="rc-consent-section-label">DAW Access</div>
+          <label className="rc-consent-checkbox-row">
+            <input type="checkbox" checked={rcDawGrant}
+              onChange={e => setRcDawGrant(e.target.checked)} />
+            <span>Allow DAW control</span>
+          </label>
+        </div>
+
         <div className="rc-consent-actions">
           <button className="rc-consent-btn decline"
-            onClick={() => { setRcDenied(true); respondToRcPermission('denied', false); }}>
-            Decline
-          </button>
-          <button className="rc-consent-btn view-only"
-            onClick={() => { respondToRcPermission('view', rcAudioDeviceConsent); }}>
-            Screen View Only
+            onClick={() => {
+              setRcDenied(true);
+              respondToRcPermission({ desktopAccess: 'none', dawControl: false } as RcPermissionGrant);
+            }}>
+            Cancel
           </button>
           <button className="rc-consent-btn accept"
-            onClick={() => { respondToRcPermission('full', rcAudioDeviceConsent); }}>
-            Allow Full Desktop Control
+            onClick={() => respondToRcPermission({ desktopAccess: rcDesktopGrant, dawControl: rcDawGrant })}>
+            Grant Access
           </button>
         </div>
       </div>
@@ -544,7 +774,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
         {incomingCallModal}
         {rcConsentModal}
         {slot && createPortal(
-          <div className={`transport-chat-pill pill-${pillStatus}`} onClick={() => setIsMinimized(false)} title="Open Video Chat">
+          <div className={`transport-chat-pill pill-${pillStatus}`} data-desktop-hud="" onClick={() => setIsMinimized(false)} title="Open Video Chat">
             <div className="pill-video-icon"><Video size={14} /></div>
             <div className={`live-dot-small ${pillStatus === 'connected' ? 'connected' : pillStatus === 'ringing' ? 'ringing' : ''}`} />
             <span className="transport-chat-label">
@@ -565,6 +795,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
 
       <div
         ref={widgetRef}
+        data-desktop-hud=""
         className="floating-video-widget"
         style={{
           ...(position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', margin: 0 } : undefined),
@@ -603,22 +834,24 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
           showLocalCam={showLocalCam}
           setShowLocalCam={setShowLocalCam}
           userRole={userRole}
+          muteCallAudio={muteCallAudio}
         />
 
-        {/* Desktop Control — small in-widget preview with Full Screen button */}
-        {userRole === 'engineer' && rcActive && remoteDesktopStream && !desktopFullscreen && (
+        {/* Desktop Control — preview panel, only shown when engineer opens it */}
+        {userRole === 'engineer' && rcActive && remoteDesktopStream && showDesktopPanel && !desktopFullscreen && (
           <DesktopStreamPreview
             stream={remoteDesktopStream}
             onFullscreen={() => setDesktopFullscreen(true)}
           />
         )}
 
-        {/* Desktop Control full-screen overlay — shown only when user explicitly enters fullscreen */}
+        {/* Desktop Control full-screen overlay — handles all event capture directly */}
         {userRole === 'engineer' && rcActive && remoteDesktopStream && desktopFullscreen && (
           <DesktopControlFullscreen
             stream={remoteDesktopStream}
             onExit={() => setDesktopFullscreen(false)}
             onStop={stopRemoteControl}
+            onSendInput={sendInputEvent}
           />
         )}
 
@@ -727,30 +960,40 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
                 <option value="master-output">Master Out</option>
               </select>
             )}
-            {/* App Control — engineer-triggered, no artist permission dialog */}
+            {/* Request Access — unified prompt for Desktop + DAW permissions */}
             {userRole === 'engineer' && (
-              <button
-                className={`control-btn app-rc-btn ${appRcReady ? 'active' : ''}`}
-                onClick={appRcReady ? stopAppRc : startAppRc}
-                title={appRcReady ? 'App Control active — click to disconnect' : 'Connect App Control (DAW only)'}
-              >
-                <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
-                  {appRcReady ? '● App Ctrl' : 'App Ctrl'}
-                </span>
-              </button>
-            )}
-            {/* Desktop Control button — System B, full OS access with artist permission */}
-            {userRole === 'engineer' && (
-              <button
-                className={`control-btn rc-btn ${rcActive ? 'active' : ''}`}
-                onClick={rcActive ? stopRemoteControl : () => requestRemoteControl(userId)}
-                title={rcActive ? 'Stop Desktop Control' : 'Request Desktop Access (files, audio interface, system menus)'}
-              >
-                {rcActive ? <MonitorX size={18} /> : <MonitorPlay size={18} />}
-                <span style={{ fontSize: 10, marginLeft: 4, whiteSpace: 'nowrap' }}>
-                  {rcActive ? 'Stop Desktop' : 'Desktop'}
-                </span>
-              </button>
+              rcActive ? (
+                <>
+                  {remoteDesktopStream && (
+                    <button
+                      className={`session-ctrl-btn${showDesktopPanel ? ' active' : ''}`}
+                      onClick={() => setShowDesktopPanel(v => !v)}
+                      title={showDesktopPanel ? 'Hide desktop preview' : 'View artist desktop'}
+                    >
+                      {showDesktopPanel ? 'Hide Desktop' : 'View Desktop'}
+                    </button>
+                  )}
+                  <button
+                    className="session-ctrl-btn desktop active"
+                    onClick={stopRemoteControl}
+                    title="Stop Desktop Control"
+                  >
+                    Stop Desktop
+                  </button>
+                </>
+              ) : rcRequested ? (
+                <button className="session-ctrl-btn" disabled title="Waiting for artist…">
+                  Requesting…
+                </button>
+              ) : (
+                <button
+                  className="session-ctrl-btn"
+                  onClick={() => requestRemoteControl(userId)}
+                  title="Request desktop and DAW access from artist"
+                >
+                  Request Access
+                </button>
+              )
             )}
           </div>
 
@@ -789,6 +1032,7 @@ const FloatingVideoChat: React.FC<FloatingVideoChatProps> = ({
       </div>
     </>
   );
-};
+});
 
-export default memo(FloatingVideoChat);
+FloatingVideoChat.displayName = 'FloatingVideoChat';
+export default FloatingVideoChat;

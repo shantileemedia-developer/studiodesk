@@ -299,9 +299,17 @@ export const useNativeAudioEngine = () => {
   useEffect(() => {
     if (!eng() || userRole !== 'artist') return;
 
-    // Eagerly init AudioContext so masterStreamRef.current is ready before the
-    // first getDawStream() call (which happens when the video call starts).
-    getAudioCtx();
+    // Eagerly init AudioContext so masterStreamRef.current is ready before any
+    // getDawStream() call, then immediately resume so it's running without
+    // waiting for a video call to trigger a user-gesture unlock.
+    const ctx0 = getAudioCtx();
+    ctx0.resume().catch(() => {});
+
+    // Keep the context running — Chromium can re-suspend it without a call active.
+    const keepAlive = setInterval(() => {
+      const c = audioCtxRef.current;
+      if (c && c.state === 'suspended') c.resume().catch(() => {});
+    }, 2000);
 
     window.audioEngine!.subscribeBus('playback-mix').catch(() => {});
     window.audioEngine!.subscribeBus('mic-input').catch(() => {});
@@ -318,7 +326,10 @@ export const useNativeAudioEngine = () => {
       const ctx  = audioCtxRef.current;
       const dest = masterStreamRef.current;
       if (!ctx || ctx.state === 'closed' || !dest) return;
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      // Skip scheduling while suspended — stale timestamps cause the chunk to
+      // be dropped on resume. The keep-alive interval will resume the context
+      // within 2 s and the next chunk will schedule correctly.
+      if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); return; }
 
       const f32       = new Float32Array(data.buffer, data.byteOffset, data.byteLength / 4);
       const numFrames = f32.length / 2; // interleaved stereo
@@ -351,6 +362,7 @@ export const useNativeAudioEngine = () => {
     });
 
     return () => {
+      clearInterval(keepAlive);
       off();
       window.audioEngine?.unsubscribeBus('playback-mix').catch(() => {});
       window.audioEngine?.unsubscribeBus('mic-input').catch(() => {});

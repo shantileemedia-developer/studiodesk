@@ -414,15 +414,26 @@ ipcMain.handle('audio:getDevices',   () => engine.getDevices());
 ipcMain.handle('audio:getHostAPIs',  () => ({ HostAPIs: [] }));
 
 ipcMain.handle('audio:play', async (_e, specs, startTime, outDeviceId, sr) => {
+  // Reset throttles so the initial position event is never swallowed.
+  lastPosSend = 0;
+  lastTrackLevelsSend = 0;
   await engine.startPlayback(specs, startTime, outDeviceId ?? -1, sr ?? 48000);
 });
 ipcMain.handle('audio:stop', () => {
   const t0 = Date.now();
   console.log(`[AUDIT][IPC][audio:stop] RECEIVED t=${t0}`);
+  // Reset throttles before stopPlayback() emits its zero-meter / final-position events.
+  lastPosSend = 0;
+  lastTrackLevelsSend = 0;
   engine.stopPlayback();
   console.log(`[AUDIT][IPC][audio:stop] EXECUTED elapsed=${Date.now() - t0}ms`);
 });
-ipcMain.handle('audio:seek',  (_e, t: number) => engine.seek(t));
+ipcMain.handle('audio:seek', (_e, t: number) => {
+  // Reset position throttle so the seeked position always reaches the renderer,
+  // even when called within 20 ms of the last position event.
+  lastPosSend = 0;
+  engine.seek(t);
+});
 ipcMain.handle('audio:setTrackParams', (_e, trackId: string, params: any) =>
   engine.setTrackParams(trackId, params));
 

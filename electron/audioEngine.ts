@@ -528,8 +528,28 @@ export class NativeAudioEngine extends EventEmitter {
       `playing=${this.playing} ` +
       `t=${this._auditStopRequestedAt}`,
     );
-    this.playing = false;
+
+    // Stop the fill loop FIRST so no more position/level events race with our zeros.
     if (this.fillTimer) { clearInterval(this.fillTimer); this.fillTimer = null; }
+
+    // Emit final wall-clock position before tearing down state.
+    if (this.playing && this._writeStartWall > 0) {
+      const wallMs   = Date.now() - this._writeStartWall;
+      const finalPos = this._writeStartSample / this.engineSr + wallMs / 1000;
+      this.emit('position', finalPos);
+    }
+
+    // Zero all meters so the UI doesn't stay lit after stop/pause.
+    const zeroTracks: Record<string, [number, number]> = {};
+    for (const rt of this.tracks) {
+      zeroTracks[rt.spec.trackId] = [0, 0];
+    }
+    if (Object.keys(zeroTracks).length > 0) this.emit('trackLevels', zeroTracks);
+    this.emit('levels', [0, 0]);
+    this.emit('inputLevels', [0, 0]);
+
+    this.playing = false;
+
     if (this.outStream && !this.monitoring) {
       try { this.outStream.quit(); } catch {}
       this.outStream = null;
@@ -551,6 +571,8 @@ export class NativeAudioEngine extends EventEmitter {
     this.playPosition      = Math.max(0, Math.round(timeSecs * this.engineSr));
     this._writeStartWall   = Date.now();
     this._writeStartSample = this.playPosition;
+    // Always emit position so the renderer cursor updates even when not playing.
+    this.emit('position', Math.max(0, timeSecs));
   }
 
   setTrackParams(trackId: string, params: Partial<{ volume: number; pan: number; muted: boolean }>) {

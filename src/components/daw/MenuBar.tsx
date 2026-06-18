@@ -234,7 +234,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
         addToRecent(state.projectName);
         toast('Project saved.');
         return;
-      } catch (err) { console.error('Native save-file error:', err); }
+      } catch (err) {
+        console.error('Native save-file error:', err);
+        toast('Save failed — check the console for details.');
+        return;
+      }
     }
 
     // Legacy: save project.json inside project folder
@@ -243,9 +247,13 @@ const MenuBar: React.FC<MenuBarProps> = ({
         await window.studioProject.save(projectDirPath, json);
         addToRecent(projectDirPath.replace(/.*[\\/]/, ''));
         if (!dirHandle) { toast('Project saved.'); return; }
-      } catch (err) { console.error('Native save error:', err); }
+      } catch (err) {
+        console.error('Native save error:', err);
+        if (!dirHandle) { toast('Save failed — check the console for details.'); return; }
+      }
     }
 
+    // No save path set at all — prompt the user to choose one.
     if (!dirHandle) { handleSaveAs(); return; }
     try {
       const fh = await dirHandle.getFileHandle('project.json', { create: true });

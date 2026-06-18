@@ -27,6 +27,17 @@ try {
   console.warn('[AudioEngine] naudiodon not compiled — falling back to Web Audio API in renderer');
 }
 
+// pa_callback: PortAudio callback-mode addon for ASIO-accurate seek/stop.
+// Falls back gracefully to push-mode if not compiled.
+// Path: dist-electron/audioEngine.js → ../electron/native/build/Release/pa_callback.node
+let paAddon: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  paAddon = require(path.join(__dirname, '../electron/native/build/Release/pa_callback.node'));
+} catch {
+  console.warn('[AudioEngine] pa_callback addon not compiled — ASIO will use push-mode fallback');
+}
+
 export const nativeAudioAvailable = !!naudiodon;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -180,6 +191,9 @@ export class NativeAudioEngine extends EventEmitter {
   private engineSr      = ENGINE_SR;
   private tracks:       TrackRuntime[] = [];
   private fillTimer:    NodeJS.Timeout | null = null;
+  // Callback-addon state (paAddon path)
+  private _usingCbAddon = false;
+  private _cbTrackIds:  string[] = [];  // ordered track IDs matching addon's array
   // Wall-clock anchor used to gate writes and prevent PortAudio ring-buffer overflow.
   // We track how many samples have been CONSUMED by the device (wall-clock * sr) and
   // refuse to write more than MAX_WRITE_AHEAD_MS milliseconds ahead of consumption.
@@ -286,6 +300,67 @@ export class NativeAudioEngine extends EventEmitter {
     this.tracks  = runtimes;
     this.playing = true;
 
+    // ── Callback-addon path (ASIO-grade: atomic seek, Pa_AbortStream on stop) ─
+    if (paAddon) {
+      // ASIO is exclusive — if monitoring owns outStream, close it before we open ours.
+      if (this.monitoring && this.inStream && this.outStream) {
+        this.inStream.unpipe(this.outStream);
+        try { this.outStream.quit(); } catch {}
+        this.outStream = null;
+      }
+
+      const startSample = Math.round(startTimeSecs * sr);
+      const trackData   = runtimes.map(rt => {
+        const angle = ((rt.spec.pan + 1) / 2) * (Math.PI / 2);
+        return {
+          left:          rt.left,
+          right:         rt.right,
+          startSample:   rt.startSample,
+          endSample:     rt.endSample,
+          offsetSamples: rt.offsetSamples,
+          srcRatio:      rt.fileSr / sr,
+          volume:        rt.spec.volume,
+          panL:          Math.cos(angle),
+          panR:          Math.sin(angle),
+          muted:         rt.spec.muted ? 1 : 0,
+        };
+      });
+      this._cbTrackIds = runtimes.map(rt => rt.spec.trackId);
+
+      try {
+        paAddon.play(
+          outDeviceId, sr, startSample, trackData,
+          // onPosition — fires each PortAudio callback (~10 ms, 100 Hz)
+          (pos: number) => { this.emit('position', pos); },
+          // onLevels — master stereo RMS
+          (levels: number[]) => { this.emit('levels', levels); },
+          // onTrackLevels — flat array [L0, R0, L1, R1, …]
+          (flat: number[]) => {
+            const map: Record<string, [number, number]> = {};
+            for (let i = 0; i < this._cbTrackIds.length; i++) {
+              map[this._cbTrackIds[i]] = [flat[i * 2] ?? 0, flat[i * 2 + 1] ?? 0];
+            }
+            this.emit('trackLevels', map);
+          },
+          // onEnded — all clips past their end sample
+          (endPos: number) => {
+            this.stopPlayback();
+            this.emit('ended', endPos);
+          },
+        );
+        this._usingCbAddon = true;
+        this.emit('position', startTimeSecs);  // immediate cursor snap before first callback
+        return;
+      } catch (err) {
+        console.error('[AudioEngine] pa_callback.play() failed, falling back to push-mode:', err);
+        this._usingCbAddon = false;
+        this._cbTrackIds   = [];
+      }
+    }
+
+    // ── Push-mode fallback (WASAPI / no addon) ────────────────────────────────
+    this._usingCbAddon = false;
+
     // Anchor wall-clock so _fill() can rate-limit writes
     this._writeStartWall   = Date.now();
     this._writeStartSample = this.playPosition;
@@ -304,12 +379,9 @@ export class NativeAudioEngine extends EventEmitter {
     this._diagSecMaxDurMs      = 0;
     this._diagSecMaxIntervalMs = 0;
     this._diagLastAheadMs      = 0;
-    console.log(`[DIAG][ASIO] playback started — FILL_INTERVAL=${FILL_INTERVAL}ms BUFFER_SAMPLES=${BUFFER_SAMPLES} sr=${sr} MAX_WRITE_AHEAD_MS=${NativeAudioEngine.MAX_WRITE_AHEAD_MS}`);
+    console.log(`[DIAG][push] playback started — FILL_INTERVAL=${FILL_INTERVAL}ms BUFFER_SAMPLES=${BUFFER_SAMPLES} sr=${sr} MAX_WRITE_AHEAD_MS=${NativeAudioEngine.MAX_WRITE_AHEAD_MS}`);
 
-    // Reuse an existing outStream opened by monitoring rather than creating a
-    // second one — ASIO uses exclusive device access and rejects a second open.
-    // If monitoring pipe is active, unpipe it while _fill() drives the output;
-    // stopPlayback() will re-pipe when the fill loop stops.
+    // Reuse an existing outStream opened by monitoring; unpipe it while _fill() drives output.
     if (this.outStream) {
       if (this.monitoring && this.inStream) {
         this.inStream.unpipe(this.outStream);
@@ -333,8 +405,6 @@ export class NativeAudioEngine extends EventEmitter {
       }
     }
 
-    // Emit start position immediately so the renderer can anchor the cursor
-    // before the first fill tick fires (~6 ms later).
     this.emit('position', startTimeSecs);
     this.fillTimer = setInterval(() => this._fill(), FILL_INTERVAL);
   }
@@ -520,23 +590,22 @@ export class NativeAudioEngine extends EventEmitter {
   }
 
   stopPlayback() {
-    this._auditStopRequestedAt = Date.now();
-    console.log(
-      `[AUDIT][Engine][stopPlayback] ENTER ` +
-      `samplePos=${this.playPosition} ` +
-      `time=${(this.playPosition / this.engineSr).toFixed(4)}s ` +
-      `playing=${this.playing} ` +
-      `t=${this._auditStopRequestedAt}`,
-    );
+    // ── Callback-addon path ────────────────────────────────────────────────────
+    if (this._usingCbAddon && paAddon) {
+      const finalPosSamples = paAddon.getPosition() as number;
+      paAddon.abort();   // Pa_AbortStream — no drain, silence immediately
+      this._usingCbAddon = false;
+      const finalPos = finalPosSamples / this.engineSr;
+      if (this.playing) this.emit('position', finalPos);
+    } else {
+      // ── Push-mode path ───────────────────────────────────────────────────────
+      if (this.fillTimer) { clearInterval(this.fillTimer); this.fillTimer = null; }
 
-    // Stop the fill loop FIRST so no more position/level events race with our zeros.
-    if (this.fillTimer) { clearInterval(this.fillTimer); this.fillTimer = null; }
-
-    // Emit final wall-clock position before tearing down state.
-    if (this.playing && this._writeStartWall > 0) {
-      const wallMs   = Date.now() - this._writeStartWall;
-      const finalPos = this._writeStartSample / this.engineSr + wallMs / 1000;
-      this.emit('position', finalPos);
+      if (this.playing && this._writeStartWall > 0) {
+        const wallMs   = Date.now() - this._writeStartWall;
+        const finalPos = this._writeStartSample / this.engineSr + wallMs / 1000;
+        this.emit('position', finalPos);
+      }
     }
 
     // Zero all meters so the UI doesn't stay lit after stop/pause.
@@ -549,35 +618,72 @@ export class NativeAudioEngine extends EventEmitter {
     this.emit('inputLevels', [0, 0]);
 
     this.playing = false;
+    this._cbTrackIds = [];
 
+    // naudiodon stream teardown (push-mode or monitoring reopen)
     if (this.outStream && !this.monitoring) {
       try { this.outStream.quit(); } catch {}
       this.outStream = null;
     }
-    // Re-pipe monitoring passthrough now that _fill() has stopped writing.
-    // Skip when recording is active — startRecording already owns the pipe and
-    // calling pipe() again here would create a double-pipe during overdub.
-    if (this.monitoring && this.inStream && this.outStream && !this.recording) {
+
+    // If monitoring was closed because the callback addon opened the device
+    // exclusively, reopen it now that playback has stopped.
+    if (this.monitoring && this.inStream && !this.outStream && !this.recording) {
+      try {
+        this.outStream = new naudiodon.AudioIO({
+          outOptions: {
+            channelCount: NUM_CHANNELS,
+            sampleFormat: naudiodon.SampleFormatFloat32,
+            sampleRate:   this.engineSr,
+            deviceId:     this.outDeviceId,
+            closeOnError: false,
+          },
+        });
+        this.outStream.start();
+        this.inStream.pipe(this.outStream, { end: false });
+      } catch {}
+    } else if (this.monitoring && this.inStream && this.outStream && !this.recording) {
       this.inStream.pipe(this.outStream, { end: false });
     }
+
     this.liveParams.clear();
-    console.log(
-      `[AUDIT][Engine][stopPlayback] DONE ` +
-      `elapsed=${Date.now() - this._auditStopRequestedAt}ms`,
-    );
   }
 
   seek(timeSecs: number) {
-    this.playPosition      = Math.max(0, Math.round(timeSecs * this.engineSr));
-    this._writeStartWall   = Date.now();
-    this._writeStartSample = this.playPosition;
-    // Always emit position so the renderer cursor updates even when not playing.
+    const targetSample = Math.max(0, Math.round(timeSecs * this.engineSr));
+
+    if (this.playing && this._usingCbAddon && paAddon) {
+      // Atomic seek: the PortAudio callback reads seekTarget at the next frame.
+      // No buffer flush needed — position jumps instantaneously.
+      paAddon.seek(targetSample);
+    } else {
+      this._writeStartWall   = Date.now();
+      this._writeStartSample = targetSample;
+    }
+
+    this.playPosition = targetSample;
     this.emit('position', Math.max(0, timeSecs));
   }
 
   setTrackParams(trackId: string, params: Partial<{ volume: number; pan: number; muted: boolean }>) {
-    const cur = this.liveParams.get(trackId) ?? { volume: 1, pan: 0, muted: false };
-    this.liveParams.set(trackId, { ...cur, ...params });
+    const cur     = this.liveParams.get(trackId) ?? { volume: 1, pan: 0, muted: false };
+    const updated = { ...cur, ...params };
+    this.liveParams.set(trackId, updated);
+
+    // Forward live param change to callback-addon atomics (effective next callback frame)
+    if (this._usingCbAddon && paAddon) {
+      const idx = this._cbTrackIds.indexOf(trackId);
+      if (idx >= 0) {
+        const angle = ((updated.pan + 1) / 2) * (Math.PI / 2);
+        paAddon.setTrackParam(
+          idx,
+          updated.volume,
+          Math.cos(angle),
+          Math.sin(angle),
+          updated.muted ? 1 : 0,
+        );
+      }
+    }
   }
 
   getCurrentPosition(): number {

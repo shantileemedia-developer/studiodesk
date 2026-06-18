@@ -27,7 +27,8 @@ contextBridge.exposeInMainWorld('audioEngine', {
   isAvailable: (): Promise<boolean> => ipcRenderer.invoke('audio:isAvailable'),
 
   // Device enumeration
-  getDevices: (): Promise<any[]> => ipcRenderer.invoke('audio:getDevices'),
+  getDevices:   (): Promise<any[]> => ipcRenderer.invoke('audio:getDevices'),
+  getHostAPIs:  (): Promise<any>   => ipcRenderer.invoke('audio:getHostAPIs'),
 
   // Transport
   play: (specs: any[], startTime: number, outDeviceId?: number, sr?: number): Promise<void> =>
@@ -69,6 +70,7 @@ contextBridge.exposeInMainWorld('audioEngine', {
   onPosition:    (cb: (t: number) => void)    => { const h = (_: IpcRendererEvent, t: number)    => cb(t);    ipcRenderer.on('audio:position',    h); return () => ipcRenderer.off('audio:position',    h); },
   onLevels:      (cb: (l: number[]) => void)  => { const h = (_: IpcRendererEvent, l: number[])  => cb(l);    ipcRenderer.on('audio:levels',      h); return () => ipcRenderer.off('audio:levels',      h); },
   onInputLevels: (cb: (l: number[]) => void)  => { const h = (_: IpcRendererEvent, l: number[])  => cb(l);    ipcRenderer.on('audio:inputLevels', h); return () => ipcRenderer.off('audio:inputLevels', h); },
+  onTrackLevels: (cb: (levels: Record<string, [number, number]>) => void) => { const h = (_: IpcRendererEvent, levels: Record<string, [number, number]>) => cb(levels); ipcRenderer.on('audio:trackLevels', h); return () => ipcRenderer.off('audio:trackLevels', h); },
   onEnded:       (cb: (t: number) => void)    => { const h = (_: IpcRendererEvent, t: number)    => cb(t);    ipcRenderer.on('audio:ended',       h); return () => ipcRenderer.off('audio:ended',       h); },
   onError:       (cb: (m: string) => void)    => { const h = (_: IpcRendererEvent, m: string)    => cb(m);    ipcRenderer.on('audio:error',       h); return () => ipcRenderer.off('audio:error',       h); },
   onUnavailable: (cb: () => void)             => { const h = () => cb();                                       ipcRenderer.on('audio:unavailable', h); return () => ipcRenderer.off('audio:unavailable', h); },
@@ -92,6 +94,22 @@ contextBridge.exposeInMainWorld('studioProject', {
     ipcRenderer.invoke('project:save', projectDir, json),
   load:  (projectDir: string): Promise<string> =>
     ipcRenderer.invoke('project:load', projectDir),
+  loadFile:     (filePath: string): Promise<string> =>
+    ipcRenderer.invoke('project:loadFile', filePath),
+  saveFile:     (filePath: string, json: string): Promise<void> =>
+    ipcRenderer.invoke('project:saveFile', filePath, json),
+  saveAsDialog: (defaultName: string): Promise<string | null> =>
+    ipcRenderer.invoke('project:saveAsDialog', defaultName),
+  setupFromFile:(filePath: string): Promise<string> =>
+    ipcRenderer.invoke('project:setupFromFile', filePath),
+  saveAs: (parentDir: string, name: string): Promise<{ projectFile: string; audioDir: string; projectDir: string }> =>
+    ipcRenderer.invoke('project:saveAs', parentDir, name),
+  backup: (projectDir: string, name: string, json: string): Promise<void> =>
+    ipcRenderer.invoke('project:backup', projectDir, name, json),
+  copyAudio: (srcDir: string, dstDir: string): Promise<void> =>
+    ipcRenderer.invoke('project:copyAudio', srcDir, dstDir),
+  searchAudio: (dir: string): Promise<string[]> =>
+    ipcRenderer.invoke('fs:search-audio', dir),
 });
 
 // ── StudioRC Bridge — OS-level remote control ────────────────────────────────
@@ -122,8 +140,10 @@ contextBridge.exposeInMainWorld('studioRC', {
    * Read a local file as a Uint8Array.
    * Used after openAudioDialog() to load the chosen audio file without another dialog.
    */
-  readFile: (filePath: string): Promise<Uint8Array> =>
+  readFile:  (filePath: string): Promise<Uint8Array> =>
     ipcRenderer.invoke('fs:read-file', filePath),
+  writeFile: (filePath: string, data: ArrayBuffer): Promise<void> =>
+    ipcRenderer.invoke('fs:write-file', filePath, data),
 });
 
 // ── Clipboard Bridge — routes through main process for guaranteed access ──────

@@ -196,6 +196,27 @@ export class NativeAudioEngine extends EventEmitter {
   private recSr         = ENGINE_SR;
   private recNumCh      = NUM_CHANNELS;
 
+  // ── Audit logging ─────────────────────────────────────────────────────────
+  private _auditFillCount = 0;  // counts _fill() calls; log every ~500 ms
+  private _auditStopRequestedAt = 0; // Date.now() when stopPlayback() is called
+
+  // ── ASIO callback diagnostics ──────────────────────────────────────────────
+  // Counters reset on each startPlayback(); per-second window resets each log.
+  private _diagCbTotal         = 0;   // total _fill() invocations this session
+  private _diagMissedTotal     = 0;   // total missed deadlines (gap > 2× FILL_INTERVAL)
+  private _diagUnderrunTotal   = 0;   // total skipped writes (write-ahead gate triggered)
+  private _diagOverflowTotal   = 0;   // total write() errors (ring buffer rejected write)
+  private _diagLastFillStart   = 0;   // Date.now() at previous _fill() entry
+  private _diagLastSecLog      = 0;   // Date.now() at last per-second log
+  // Per-second window accumulators (reset each log line)
+  private _diagSecCb           = 0;
+  private _diagSecMissed       = 0;
+  private _diagSecUnderruns    = 0;
+  private _diagSecOverflows    = 0;
+  private _diagSecMaxDurMs     = 0;   // longest _fill() wall-clock time this second
+  private _diagSecMaxIntervalMs = 0;  // longest gap between consecutive _fill() calls
+  private _diagLastAheadMs     = 0;   // ring-buffer-ahead estimate at last fill
+
   // ── Devices
   private outDeviceId   = -1;
   private inDeviceId    = -1;
@@ -269,6 +290,22 @@ export class NativeAudioEngine extends EventEmitter {
     this._writeStartWall   = Date.now();
     this._writeStartSample = this.playPosition;
 
+    // Reset diagnostics for new session
+    this._diagCbTotal          = 0;
+    this._diagMissedTotal      = 0;
+    this._diagUnderrunTotal    = 0;
+    this._diagOverflowTotal    = 0;
+    this._diagLastFillStart    = 0;
+    this._diagLastSecLog       = Date.now();
+    this._diagSecCb            = 0;
+    this._diagSecMissed        = 0;
+    this._diagSecUnderruns     = 0;
+    this._diagSecOverflows     = 0;
+    this._diagSecMaxDurMs      = 0;
+    this._diagSecMaxIntervalMs = 0;
+    this._diagLastAheadMs      = 0;
+    console.log(`[DIAG][ASIO] playback started — FILL_INTERVAL=${FILL_INTERVAL}ms BUFFER_SAMPLES=${BUFFER_SAMPLES} sr=${sr} MAX_WRITE_AHEAD_MS=${NativeAudioEngine.MAX_WRITE_AHEAD_MS}`);
+
     // Reuse an existing outStream opened by monitoring rather than creating a
     // second one — ASIO uses exclusive device access and rejects a second open.
     // If monitoring pipe is active, unpipe it while _fill() drives the output;
@@ -282,7 +319,7 @@ export class NativeAudioEngine extends EventEmitter {
         this.outStream = new naudiodon.AudioIO({
           outOptions: {
             channelCount: NUM_CHANNELS,
-            sampleFormat: naudiodon.SampleFormat32Bit,
+            sampleFormat: naudiodon.SampleFormatFloat32,
             sampleRate:   sr,
             deviceId:     outDeviceId,
             closeOnError: false,
@@ -296,16 +333,38 @@ export class NativeAudioEngine extends EventEmitter {
       }
     }
 
+    // Emit start position immediately so the renderer can anchor the cursor
+    // before the first fill tick fires (~6 ms later).
+    this.emit('position', startTimeSecs);
     this.fillTimer = setInterval(() => this._fill(), FILL_INTERVAL);
   }
 
   private _fill() {
     if (!this.playing || !this.outStream) return;
 
+    // ── DIAG: record callback entry ──────────────────────────────────────────
+    const _cbStart   = Date.now();
+    const _interval  = this._diagLastFillStart > 0 ? _cbStart - this._diagLastFillStart : 0;
+    this._diagLastFillStart = _cbStart;
+    this._diagCbTotal++;
+    this._diagSecCb++;
+    if (_interval > FILL_INTERVAL * 2 && this._diagCbTotal > 1) {
+      this._diagMissedTotal++;
+      this._diagSecMissed++;
+      console.warn(
+        `[DIAG][ASIO] MISSED DEADLINE  cb#${this._diagCbTotal}  interval=${_interval}ms  expected≤${FILL_INTERVAL * 2}ms`,
+      );
+    }
+    if (_interval > this._diagSecMaxIntervalMs) this._diagSecMaxIntervalMs = _interval;
+
     const n   = BUFFER_SAMPLES;
     const sr  = this.engineSr;
     const outL = new Float32Array(n);
     const outR = new Float32Array(n);
+
+    // Per-track RMS accumulators for mixer meters
+    const trackRmsL = new Map<string, number>();
+    const trackRmsR = new Map<string, number>();
 
     for (const rt of this.tracks) {
       const live  = this.liveParams.get(rt.spec.trackId);
@@ -317,6 +376,8 @@ export class NativeAudioEngine extends EventEmitter {
       const angle = ((pan + 1) / 2) * (Math.PI / 2);
       const panL  = Math.cos(angle);
       const panR  = Math.sin(angle);
+
+      let tRmsL = 0, tRmsR = 0;
 
       for (let i = 0; i < n; i++) {
         const pos = this.playPosition + i;
@@ -343,9 +404,16 @@ export class NativeAudioEngine extends EventEmitter {
           if (rem < fs) { const f = rem / fs; l *= f; r *= f; }
         }
 
-        outL[i] += l * panL;
-        outR[i] += r * panR;
+        const lOut = l * panL;
+        const rOut = r * panR;
+        outL[i] += lOut;
+        outR[i] += rOut;
+        tRmsL   += lOut * lOut;
+        tRmsR   += rOut * rOut;
       }
+
+      trackRmsL.set(rt.spec.trackId, (trackRmsL.get(rt.spec.trackId) ?? 0) + tRmsL);
+      trackRmsR.set(rt.spec.trackId, (trackRmsR.get(rt.spec.trackId) ?? 0) + tRmsR);
     }
 
     // Interleave stereo and soft-clip
@@ -360,32 +428,89 @@ export class NativeAudioEngine extends EventEmitter {
       rmsR += r * r;
     }
 
-    // Advance position clock BEFORE writing so it never stalls if write() blocks.
-    this.playPosition += n;
-    this.emit('position', this.playPosition / sr);
+    // Emit wall-clock position so the cursor tracks real-time 1:1,
+    // independent of how far ahead playPosition has pre-rendered.
+    const wallMs      = Date.now() - this._writeStartWall;
+    const wallPosSecs = this._writeStartSample / sr + wallMs / 1000;
+    this.emit('position', wallPosSecs);
     this.emit('levels', [Math.sqrt(rmsL / n), Math.sqrt(rmsR / n)]);
 
-    // Auto-stop when all clips have finished
+    // Per-track levels for mixer meters
+    const trackLevels: Record<string, [number, number]> = {};
+    for (const [id, l] of trackRmsL) {
+      trackLevels[id] = [Math.sqrt(l / n), Math.sqrt((trackRmsR.get(id) ?? 0) / n)];
+    }
+    this.emit('trackLevels', trackLevels);
+
+    // Auto-stop when all clips have finished — use wall-clock, not playPosition,
+    // since playPosition only advances on writes (see gate below).
     if (this.tracks.length > 0) {
-      const maxEnd = this.tracks.reduce((m, t) => Math.max(m, t.endSample), 0);
-      if (this.playPosition >= maxEnd) {
+      const maxEndSecs = this.tracks.reduce((m, t) => Math.max(m, t.endSample / sr), 0);
+      if (wallPosSecs >= maxEndSecs) {
         this.stopPlayback();
-        this.emit('ended', this.playPosition / sr);
+        this.emit('ended', wallPosSecs);
         return;
       }
     }
 
-    // Write to device only if we haven't written more than MAX_WRITE_AHEAD_MS ahead
-    // of what the device has consumed. This prevents the PortAudio ring buffer from
-    // overflowing and blocking write(), which would freeze the position clock.
-    const wallMs        = Date.now() - this._writeStartWall;
+    // Write-ahead gate: only write if we haven't pre-filled more than MAX_WRITE_AHEAD_MS
+    // beyond real-time device consumption. CRITICAL: playPosition only advances when a
+    // write actually occurs. If it advanced unconditionally, writtenSamples would grow at
+    // 512/6ms = 85k samples/sec while consumedSamples grows at sr=48k/sec, so aheadSamples
+    // would permanently exceed the limit after ~300ms and no further writes would ever fire.
     const consumedSamples  = (wallMs / 1000) * sr;
     const writtenSamples   = this.playPosition - this._writeStartSample;
     const maxAheadSamples  = (NativeAudioEngine.MAX_WRITE_AHEAD_MS / 1000) * sr;
-    if (writtenSamples <= consumedSamples + maxAheadSamples) {
+    const aheadSamples     = writtenSamples - consumedSamples;
+    const aheadMs          = (aheadSamples / sr) * 1000;
+    this._diagLastAheadMs  = aheadMs;
+
+    if (aheadSamples <= maxAheadSamples) {
       try {
         this.outStream.write(Buffer.from(out.buffer));
-      } catch { /* stream closed */ }
+        // Advance sample pointer ONLY on successful write so the gate stays calibrated.
+        this.playPosition += n;
+      } catch (err) {
+        // write() threw — ring buffer full / stream error = overflow
+        this._diagOverflowTotal++;
+        this._diagSecOverflows++;
+        console.error(
+          `[DIAG][ASIO] WRITE ERROR (overflow?)  cb#${this._diagCbTotal}  ahead=${aheadMs.toFixed(1)}ms  err=${(err as Error).message}`,
+        );
+      }
+    } else {
+      // Gate throttling — ring buffer is full enough; don't write this tick.
+      // playPosition is NOT advanced, so next tick re-renders the same window
+      // and re-evaluates. consumedSamples will have grown by then, lowering aheadMs.
+      this._diagUnderrunTotal++;
+      this._diagSecUnderruns++;
+    }
+
+    // ── DIAG: record callback exit and emit per-second summary ───────────────
+    const _cbEnd     = Date.now();
+    const _cbDurMs   = _cbEnd - _cbStart;
+    if (_cbDurMs > this._diagSecMaxDurMs) this._diagSecMaxDurMs = _cbDurMs;
+
+    if (_cbEnd - this._diagLastSecLog >= 1000) {
+      const expectedCbs = Math.round(1000 / FILL_INTERVAL);
+      console.log(
+        `[DIAG][ASIO][1s] ` +
+        `cbs=${this._diagSecCb}/${expectedCbs} ` +
+        `missed=${this._diagSecMissed} ` +
+        `underruns=${this._diagSecUnderruns} ` +
+        `overflows=${this._diagSecOverflows} ` +
+        `max_fill=${this._diagSecMaxDurMs}ms ` +
+        `max_gap=${this._diagSecMaxIntervalMs}ms ` +
+        `ring_ahead=${aheadMs.toFixed(1)}ms ` +
+        `| totals: cb=${this._diagCbTotal} missed=${this._diagMissedTotal} underrun=${this._diagUnderrunTotal} overflow=${this._diagOverflowTotal}`,
+      );
+      this._diagLastSecLog       = _cbEnd;
+      this._diagSecCb            = 0;
+      this._diagSecMissed        = 0;
+      this._diagSecUnderruns     = 0;
+      this._diagSecOverflows     = 0;
+      this._diagSecMaxDurMs      = 0;
+      this._diagSecMaxIntervalMs = 0;
     }
 
     // Emit interleaved F32 mix to playback-mix / master-output buses
@@ -395,6 +520,14 @@ export class NativeAudioEngine extends EventEmitter {
   }
 
   stopPlayback() {
+    this._auditStopRequestedAt = Date.now();
+    console.log(
+      `[AUDIT][Engine][stopPlayback] ENTER ` +
+      `samplePos=${this.playPosition} ` +
+      `time=${(this.playPosition / this.engineSr).toFixed(4)}s ` +
+      `playing=${this.playing} ` +
+      `t=${this._auditStopRequestedAt}`,
+    );
     this.playing = false;
     if (this.fillTimer) { clearInterval(this.fillTimer); this.fillTimer = null; }
     if (this.outStream && !this.monitoring) {
@@ -408,6 +541,10 @@ export class NativeAudioEngine extends EventEmitter {
       this.inStream.pipe(this.outStream, { end: false });
     }
     this.liveParams.clear();
+    console.log(
+      `[AUDIT][Engine][stopPlayback] DONE ` +
+      `elapsed=${Date.now() - this._auditStopRequestedAt}ms`,
+    );
   }
 
   seek(timeSecs: number) {
@@ -463,7 +600,7 @@ export class NativeAudioEngine extends EventEmitter {
       this.inStream = new naudiodon.AudioIO({
         inOptions: {
           channelCount: numCh,
-          sampleFormat: naudiodon.SampleFormat32Bit,
+          sampleFormat: naudiodon.SampleFormatFloat32,
           sampleRate:   sr,
           deviceId:     inDeviceId,
           closeOnError: false,
@@ -513,7 +650,7 @@ export class NativeAudioEngine extends EventEmitter {
         this.outStream = new naudiodon.AudioIO({
           outOptions: {
             channelCount: numCh,
-            sampleFormat: naudiodon.SampleFormat32Bit,
+            sampleFormat: naudiodon.SampleFormatFloat32,
             sampleRate:   sr,
             deviceId:     outDeviceId,
             closeOnError: false,
@@ -575,7 +712,7 @@ export class NativeAudioEngine extends EventEmitter {
     if (this.recording && this.inStream) {
       if (!this.outStream) {
         this.outStream = new naudiodon.AudioIO({
-          outOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: outDeviceId, closeOnError: false },
+          outOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormatFloat32, sampleRate: sr, deviceId: outDeviceId, closeOnError: false },
         });
         this.outStream.start();
       }
@@ -589,14 +726,14 @@ export class NativeAudioEngine extends EventEmitter {
     // without hitting an ASIO exclusive-access conflict.
     try {
       this.inStream = new naudiodon.AudioIO({
-        inOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: inDeviceId, closeOnError: false },
+        inOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormatFloat32, sampleRate: sr, deviceId: inDeviceId, closeOnError: false },
       });
       this.inStream.on('data', (chunk: Buffer) => {
         if (this._micBusSubs > 0) this.emit('busChunk', 'mic-input', chunk);
       });
       if (!this.outStream) {
         this.outStream = new naudiodon.AudioIO({
-          outOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormat32Bit, sampleRate: sr, deviceId: outDeviceId, closeOnError: false },
+          outOptions: { channelCount: numCh, sampleFormat: naudiodon.SampleFormatFloat32, sampleRate: sr, deviceId: outDeviceId, closeOnError: false },
         });
         this.outStream.start();
       }
@@ -660,7 +797,7 @@ export class NativeAudioEngine extends EventEmitter {
       this._micBusStream = new naudiodon.AudioIO({
         inOptions: {
           channelCount: numCh,
-          sampleFormat: naudiodon.SampleFormat32Bit,
+          sampleFormat: naudiodon.SampleFormatFloat32,
           sampleRate:   sr,
           deviceId:     inDeviceId,
           closeOnError: false,
@@ -708,7 +845,19 @@ export class NativeAudioEngine extends EventEmitter {
   }
 
   static getTakePath(name: string): string {
+    const dir  = NativeAudioEngine.getTakesDir();
     const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
-    return path.join(NativeAudioEngine.getTakesDir(), `${safe}.wav`);
+    const now  = new Date();
+    const date = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+    ].join('_');
+    let idx = 1;
+    while (true) {
+      const candidate = path.join(dir, `${safe}_${date}_${String(idx).padStart(3, '0')}.wav`);
+      if (!fs.existsSync(candidate)) return candidate;
+      idx++;
+    }
   }
 }

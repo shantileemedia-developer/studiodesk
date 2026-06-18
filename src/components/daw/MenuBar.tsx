@@ -76,6 +76,16 @@ const MenuBar: React.FC<MenuBarProps> = ({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showProjectSetup, setShowProjectSetup] = useState(false);
   const [showProjectLength, setShowProjectLength] = useState(false);
+
+  // Save As modal state
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [saveAsName, setSaveAsName] = useState('');
+  const [saveAsCopyAudio, setSaveAsCopyAudio] = useState(false);
+
+  // Missing files recovery state
+  interface MissingFile { poolItemId: string; name: string; localFileName: string; }
+  const [missingFiles, setMissingFiles] = useState<MissingFile[]>([]);
+  const pendingLoadRef = useRef<{ saved: any; audioDir: string; dir: string } | null>(null);
   const [projectLengthMin, setProjectLengthMin] = useState(() => {
     const saved = localStorage.getItem('sd_projectLength');
     return saved ? Math.floor(Number(saved) / 60) : 5;
@@ -202,10 +212,22 @@ const MenuBar: React.FC<MenuBarProps> = ({
     }, null, 2);
   }, []);
 
+  // Derive project root folder from a project file path.
+  // New: D:/MySong/Project/MySong.rsync → D:/MySong
+  // Old: D:/MySong/MySong.rsproj        → D:/MySong
+  const getProjectDir = useCallback((filePath: string): string => {
+    const sep   = filePath.includes('\\') ? '\\' : '/';
+    const parts = filePath.split(sep);
+    if (parts.length >= 2 && parts[parts.length - 2] === 'Project') {
+      return parts.slice(0, -2).join(sep);
+    }
+    return parts.slice(0, -1).join(sep);
+  }, []);
+
   const handleSave = useCallback(async (dirHandle = projectDirHandle) => {
     const json = serializeForSave(state);
 
-    // New Cubase-style: save to .rsproj file path
+    // Primary: save to .rsync (or .rsproj) file path
     if (window.studioProject?.saveFile && projectFilePath) {
       try {
         await window.studioProject.saveFile(projectFilePath, json);
@@ -236,53 +258,85 @@ const MenuBar: React.FC<MenuBarProps> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectDirHandle, projectDirPath, projectFilePath, state, serializeForSave, toast, addToRecent]);
 
-  const handleSaveAs = useCallback(async () => {
-    // Electron Cubase-style: Save As dialog → .rsproj file
-    if (window.studioProject?.saveAsDialog) {
+  // Auto-save to Backups/ every 60 seconds (Electron only, project must be saved first)
+  useEffect(() => {
+    if (isEngineer || !window.studioProject?.backup) return;
+    const id = setInterval(async () => {
+      const filePath = projectFilePath;
+      const dirPath  = projectDirPath;
+      if (!filePath && !dirPath) return;
       try {
-        const filePath = await window.studioProject.saveAsDialog(state.projectName);
-        if (!filePath) return;
-        const name     = filePath.replace(/.*[\\/]/, '').replace(/\.rsproj$/i, '');
-        const audioDir = await window.studioProject.setupFromFile(filePath);
-        const json     = serializeForSave({ ...state, projectName: name });
-        await window.studioProject.saveFile(filePath, json);
-        setProjectFilePath(filePath);
-        localStorage.setItem('sd_projectFilePath', filePath);
-        setAudioDirPath(audioDir);
-        localStorage.setItem('sd_audioDirPath', audioDir);
-        dispatch({ type: 'RENAME_PROJECT', payload: name });
-        addToRecent(name);
-        toast(`Saved: ${name}`);
-      } catch (err: any) {
-        if (err.name !== 'AbortError') toast('Save failed.');
-      }
-      return;
-    }
+        const dir  = filePath ? getProjectDir(filePath) : dirPath!;
+        const name = state.projectName || 'Untitled';
+        await window.studioProject!.backup(dir, name, serializeForSave(state));
+      } catch { /* non-fatal */ }
+    }, 60_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEngineer, projectFilePath, projectDirPath, state, serializeForSave, getProjectDir]);
 
-    // Browser fallback (FSAA)
-    if (!('showDirectoryPicker' in window)) {
-      alert('Local folder saving is only supported in Chrome, Edge, or the desktop app.');
+  // Opens the Save As modal (sets default name from current project)
+  const handleSaveAs = useCallback(() => {
+    if (!window.studioProject?.saveAs) {
+      // Browser fallback (FSAA)
+      if (!('showDirectoryPicker' in window)) {
+        alert('Local folder saving is only supported in Chrome, Edge, or the desktop app.');
+        return;
+      }
+      (async () => {
+        try {
+          // @ts-ignore
+          const dh = await window.showDirectoryPicker({ mode: 'readwrite' });
+          setProjectDirHandle(dh);
+          const adh = await dh.getDirectoryHandle('Audio',   { create: true });
+          await dh.getDirectoryHandle('Exports', { create: true });
+          setAudioDirHandle(adh);
+          dispatch({ type: 'RENAME_PROJECT', payload: dh.name });
+          const fh = await dh.getFileHandle('project.json', { create: true });
+          const w = await fh.createWritable();
+          await w.write(serializeForSave({ ...state, projectName: dh.name }));
+          await w.close();
+          addToRecent(dh.name);
+          toast(`Saved to: ${dh.name}`);
+        } catch (err: any) {
+          if (err.name !== 'AbortError') alert('Failed to save project. Grant folder permissions and try again.');
+        }
+      })();
       return;
     }
+    setSaveAsName(state.projectName || 'Untitled Project');
+    setSaveAsCopyAudio(false);
+    setSaveAsOpen(true);
+  }, [state, serializeForSave, dispatch, setProjectDirHandle, setAudioDirHandle, toast, addToRecent]);
+
+  // Executes the Save As after the modal is confirmed
+  const executeSaveAs = useCallback(async () => {
+    if (!window.studioProject?.saveAs) return;
+    setSaveAsOpen(false);
+    const name = saveAsName.trim() || 'Untitled Project';
     try {
-      // @ts-ignore
-      const dh = await window.showDirectoryPicker({ mode: 'readwrite' });
-      setProjectDirHandle(dh);
-      const adh = await dh.getDirectoryHandle('Audio',   { create: true });
-      await dh.getDirectoryHandle('Renders', { create: true });
-      await dh.getDirectoryHandle('Exports', { create: true });
-      setAudioDirHandle(adh);
-      dispatch({ type: 'RENAME_PROJECT', payload: dh.name });
-      const fh = await dh.getFileHandle('project.json', { create: true });
-      const w = await fh.createWritable();
-      await w.write(serializeForSave({ ...state, projectName: dh.name }));
-      await w.close();
-      addToRecent(dh.name);
-      toast(`Saved to: ${dh.name}`);
+      const { canceled, filePaths } = await window.studioProject.openFolderDialog();
+      if (canceled || !filePaths[0]) return;
+      const { projectFile, audioDir, projectDir } = await window.studioProject.saveAs(filePaths[0], name);
+      const oldAudioDir = localStorage.getItem('sd_audioDirPath');
+      if (saveAsCopyAudio && oldAudioDir && window.studioProject.copyAudio) {
+        await window.studioProject.copyAudio(oldAudioDir, audioDir);
+      }
+      const json = serializeForSave({ ...state, projectName: name });
+      await window.studioProject.saveFile(projectFile, json);
+      setProjectFilePath(projectFile);
+      localStorage.setItem('sd_projectFilePath', projectFile);
+      setAudioDirPath(audioDir);
+      localStorage.setItem('sd_audioDirPath', audioDir);
+      localStorage.setItem('sd_projectDirPath', projectDir);
+      setProjectDirPath(projectDir);
+      dispatch({ type: 'RENAME_PROJECT', payload: name });
+      addToRecent(name);
+      toast(`Saved: ${name}`);
     } catch (err: any) {
-      if (err.name !== 'AbortError') alert('Failed to save project. Grant folder permissions and try again.');
+      if (err?.name !== 'AbortError') toast('Save As failed.');
     }
-  }, [state, serializeForSave, dispatch, setProjectDirHandle, setAudioDirHandle, setProjectFilePath, setAudioDirPath, toast, addToRecent]);
+  }, [saveAsName, saveAsCopyAudio, state, serializeForSave, dispatch, setProjectFilePath, setAudioDirPath, addToRecent, toast]);
 
 
   // Electron-native "Set Project Folder…" — uses main-process dialog to avoid
@@ -308,6 +362,47 @@ const MenuBar: React.FC<MenuBarProps> = ({
     }
   }, [handleSaveAs, state, serializeForSave, dispatch, addToRecent, toast]);
 
+  // Load audio files from a pool, returning urlMap and list of missing files
+  const restoreAudioFiles = useCallback(async (
+    poolItems: PoolItem[], audioDir: string
+  ): Promise<{ urlMap: Record<string, string>; missing: MissingFile[] }> => {
+    const sep = audioDir.includes('\\') ? '\\' : '/';
+    const urlMap: Record<string, string> = {};
+    const missing: MissingFile[] = [];
+    if (!window.studioRC?.readFile) return { urlMap, missing };
+    for (const item of poolItems) {
+      if (item.localFileName && !item.audioUrl) {
+        try {
+          const bytes = await window.studioRC.readFile(audioDir + sep + item.localFileName);
+          urlMap[item.id] = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
+        } catch {
+          missing.push({ poolItemId: item.id, name: item.name, localFileName: item.localFileName });
+        }
+      }
+    }
+    return { urlMap, missing };
+  }, []);
+
+  const applyUrlMap = useCallback((saved: any, urlMap: Record<string, string>) => {
+    saved.poolItems = (saved.poolItems as PoolItem[]).map((p: PoolItem) =>
+      urlMap[p.id] ? { ...p, audioUrl: urlMap[p.id] } : p
+    );
+    saved.regions = (saved.regions as Region[]).map((r: Region) => {
+      const src = (saved.poolItems as PoolItem[]).find((p: PoolItem) => p.id === r.poolItemId);
+      return src && urlMap[src.id] ? { ...r, audioUrl: urlMap[src.id] } : r;
+    });
+    return saved;
+  }, []);
+
+  const finishOpenProject = useCallback((saved: any, dir: string) => {
+    setProjectDirPath(dir);
+    localStorage.setItem('sd_projectDirPath', dir);
+    dispatch({ type: 'SET_STATE', payload: saved });
+    const name = saved.projectName ?? dir.replace(/.*[\\/]/, '');
+    addToRecent(name);
+    toast(`Opened: ${name}`);
+  }, [setProjectDirPath, dispatch, addToRecent, toast]);
+
   const handleOpenProject = useCallback(async () => {
     // Electron native path
     if (window.studioProject) {
@@ -326,35 +421,16 @@ const MenuBar: React.FC<MenuBarProps> = ({
         const saved = JSON.parse(json);
         const audioDir = await window.studioProject.setup(dir);
 
-        // Restore local audio files (blob URLs were stripped on save)
-        if (window.studioRC?.readFile) {
-          const sep = audioDir.includes('\\') ? '\\' : '/';
-          const urlMap: Record<string, string> = {};
-          for (const item of (saved.poolItems ?? []) as PoolItem[]) {
-            if (item.localFileName && !item.audioUrl) {
-              try {
-                const bytes = await window.studioRC.readFile(audioDir + sep + item.localFileName);
-                urlMap[item.id] = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
-              } catch { /* file missing */ }
-            }
-          }
-          if (Object.keys(urlMap).length > 0) {
-            saved.poolItems = (saved.poolItems as PoolItem[]).map((p: PoolItem) =>
-              urlMap[p.id] ? { ...p, audioUrl: urlMap[p.id] } : p
-            );
-            saved.regions = (saved.regions as Region[]).map((r: Region) => {
-              const src = (saved.poolItems as PoolItem[]).find((p: PoolItem) => p.id === r.poolItemId);
-              return src && urlMap[src.id] ? { ...r, audioUrl: urlMap[src.id] } : r;
-            });
-          }
+        const { urlMap, missing } = await restoreAudioFiles(saved.poolItems ?? [], audioDir);
+        applyUrlMap(saved, urlMap);
+
+        if (missing.length > 0) {
+          pendingLoadRef.current = { saved, audioDir, dir };
+          setMissingFiles(missing);
+          return;
         }
 
-        setProjectDirPath(dir);
-        localStorage.setItem('sd_projectDirPath', dir);
-        dispatch({ type: 'SET_STATE', payload: saved });
-        const name = saved.projectName ?? dir.replace(/.*[\\/]/, '');
-        addToRecent(name);
-        toast(`Opened: ${name}`);
+        finishOpenProject(saved, dir);
       } catch (err: any) {
         if (err?.message !== 'canceled') toast('Could not open project.');
       }
@@ -404,7 +480,43 @@ const MenuBar: React.FC<MenuBarProps> = ({
     } catch (err: any) {
       if (err.name !== 'AbortError') toast('No project.json found in that folder.');
     }
-  }, [dispatch, setProjectDirHandle, setAudioDirHandle, setProjectDirPath, addToRecent, toast]);
+  }, [dispatch, setProjectDirHandle, setAudioDirHandle, setProjectDirPath, addToRecent, toast, restoreAudioFiles, applyUrlMap, finishOpenProject]);
+
+  // Missing-file recovery: search the project folder for audio files and remap
+  const handleSearchForMissing = useCallback(async () => {
+    const pending = pendingLoadRef.current;
+    if (!pending || !window.studioProject?.searchAudio) return;
+    try {
+      const found = await window.studioProject.searchAudio(pending.dir);
+      const byName: Record<string, string> = {};
+      for (const p of found) {
+        const fileName = p.replace(/.*[\\/]/, '');
+        byName[fileName.toLowerCase()] = p;
+      }
+      const extraMap: Record<string, string> = {};
+      for (const mf of missingFiles) {
+        const match = byName[mf.localFileName.toLowerCase()];
+        if (match) {
+          try {
+            const bytes = await window.studioRC!.readFile(match);
+            extraMap[mf.poolItemId] = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
+          } catch { /* skip */ }
+        }
+      }
+      applyUrlMap(pending.saved, extraMap);
+      setMissingFiles([]);
+      pendingLoadRef.current = null;
+      finishOpenProject(pending.saved, pending.dir);
+    } catch { toast('Search failed.'); }
+  }, [missingFiles, applyUrlMap, finishOpenProject, toast]);
+
+  const handleIgnoreMissing = useCallback(() => {
+    const pending = pendingLoadRef.current;
+    if (!pending) return;
+    setMissingFiles([]);
+    pendingLoadRef.current = null;
+    finishOpenProject(pending.saved, pending.dir);
+  }, [finishOpenProject]);
 
   const handleNewProject = useCallback(() => {
     if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
@@ -445,8 +557,10 @@ const MenuBar: React.FC<MenuBarProps> = ({
     const importBlob = new Blob([rawBuffer]);
     const url = URL.createObjectURL(importBlob);
     try {
-      const actx = new AudioContext();
-      const buf = await actx.decodeAudioData(rawBuffer);
+      const rawPrefs = localStorage.getItem('riddimSync_audio_prefs');
+      const projectSR: number = rawPrefs ? (JSON.parse(rawPrefs).sampleRate ?? 48000) : 48000;
+      const actx = new AudioContext({ sampleRate: projectSR });
+      const buf = await actx.decodeAudioData(rawBuffer.slice(0));
       const duration = buf.duration;
       console.log('[IMPORT 2] Audio decoded — duration:', duration, 'channels:', buf.numberOfChannels, 'samples:', buf.length);
       const { left: peaks, right: rawPeaksR } = await generatePeaksStereo(buf);
@@ -454,11 +568,41 @@ const MenuBar: React.FC<MenuBarProps> = ({
       console.log('[IMPORT 3] Waveform generated — left peaks:', peaks.length, 'right peaks:', rawPeaksR?.length ?? 0);
       const poolItemId = `pool_${Date.now()}`;
       const name = fileName.replace(/\.[^.]+$/, '');
+
+      // Write converted WAV to the project Audio folder (native Electron path)
+      let savedLocalFileName: string | undefined;
+      const nativeAudioDir = localStorage.getItem('sd_audioDirPath');
+      if (nativeAudioDir && window.studioRC?.writeFile) {
+        try {
+          const wavName = `${name}.wav`;
+          const frames = buf.length;
+          const sr = buf.sampleRate;
+          const L = buf.getChannelData(0);
+          const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+          const wav = new ArrayBuffer(44 + frames * 8);
+          const dv = new DataView(wav);
+          const ws = (off: number, s: string) => s.split('').forEach((c, i) => dv.setUint8(off + i, c.charCodeAt(0)));
+          ws(0, 'RIFF'); dv.setUint32(4, 36 + frames * 8, true);
+          ws(8, 'WAVE');
+          ws(12, 'fmt '); dv.setUint32(16, 16, true);
+          dv.setUint16(20, 3, true); dv.setUint16(22, 2, true);
+          dv.setUint32(24, sr, true); dv.setUint32(28, sr * 8, true);
+          dv.setUint16(32, 8, true); dv.setUint16(34, 32, true);
+          ws(36, 'data'); dv.setUint32(40, frames * 8, true);
+          const f32 = new Float32Array(wav, 44);
+          for (let i = 0; i < frames; i++) { f32[i * 2] = L[i]; f32[i * 2 + 1] = R[i]; }
+          const sep = nativeAudioDir.includes('\\') ? '\\' : '/';
+          await window.studioRC.writeFile(nativeAudioDir + sep + wavName, wav);
+          savedLocalFileName = wavName;
+          console.log('[IMPORT] Saved to project Audio folder:', wavName);
+        } catch (err) { console.error('[IMPORT] Audio folder save failed:', err); }
+      }
+
       const poolItem: PoolItem = {
         id: poolItemId,
         name,
         audioUrl: url,
-        localFileName: fileName,
+        localFileName: savedLocalFileName ?? fileName,
         duration,
         createdAt: new Date(),
         waveformPeaks: peaks,
@@ -1034,6 +1178,64 @@ const MenuBar: React.FC<MenuBarProps> = ({
                 setShowProjectLength(false);
                 toast(`Project length set to ${projectLengthMin}m ${projectLengthSec}s`);
               }}>Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Save As modal ── */}
+      {saveAsOpen && (
+        <div className="menu-modal-overlay" onClick={() => setSaveAsOpen(false)}>
+          <div className="menu-modal project-setup-modal" onClick={e => e.stopPropagation()}>
+            <h2 className="menu-modal-title">Save Project As</h2>
+            <div className="project-setup-rows">
+              <div className="setup-row">
+                <label>Project Name</label>
+                <input
+                  className="setup-input"
+                  style={{ minWidth: 220 }}
+                  value={saveAsName}
+                  autoFocus
+                  onChange={e => setSaveAsName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') executeSaveAs(); }}
+                />
+              </div>
+              <div className="setup-row">
+                <label>Copy Audio Files</label>
+                <input
+                  type="checkbox"
+                  checked={saveAsCopyAudio}
+                  onChange={e => setSaveAsCopyAudio(e.target.checked)}
+                  style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}
+                />
+              </div>
+            </div>
+            <div className="menu-modal-footer">
+              <button className="menu-modal-btn secondary" onClick={() => setSaveAsOpen(false)}>Cancel</button>
+              <button className="menu-modal-btn primary" onClick={executeSaveAs}>Choose Location…</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Missing Files recovery modal ── */}
+      {missingFiles.length > 0 && (
+        <div className="menu-modal-overlay">
+          <div className="menu-modal project-setup-modal" onClick={e => e.stopPropagation()}>
+            <h2 className="menu-modal-title">Missing Audio Files</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10 }}>
+              {missingFiles.length} file{missingFiles.length > 1 ? 's' : ''} could not be found in the project Audio folder:
+            </p>
+            <div style={{ maxHeight: 160, overflowY: 'auto', marginBottom: 14 }}>
+              {missingFiles.map(mf => (
+                <div key={mf.poolItemId} style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '2px 0' }}>
+                  • {mf.localFileName}
+                </div>
+              ))}
+            </div>
+            <div className="menu-modal-footer">
+              <button className="menu-modal-btn secondary" onClick={handleIgnoreMissing}>Load Anyway</button>
+              <button className="menu-modal-btn primary" onClick={handleSearchForMissing}>Search Project Folder</button>
             </div>
           </div>
         </div>

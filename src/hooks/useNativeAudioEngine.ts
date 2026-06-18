@@ -80,6 +80,7 @@ export const useNativeAudioEngine = () => {
     masterStreamRef,
     recordingStartTimeRef,
     nativeMasterLevelsRef,
+    meterValuesRef,
     userRole,
   } = useDaw();
 
@@ -403,7 +404,20 @@ export const useNativeAudioEngine = () => {
   useEffect(() => {
     if (!eng()) return;
 
+    let _auditPosCnt = 0;
     const offPos = eng()!.onPosition(async (t: number) => {
+      // Ignore position events that arrive after stop has been initiated.
+      // Without this guard, the engine keeps emitting positions for ~20ms while
+      // the IPC stop is in-flight and overwrites the cursor position that
+      // handleStop already set (e.g. pre-play bar 3).
+      if (!isPlayingRef.current) {
+        console.log(`[AUDIT][Hook][onPosition] DROPPED (not playing) t=${t.toFixed(4)}s`);
+        return;
+      }
+      _auditPosCnt++;
+      if (_auditPosCnt % 50 === 0) {
+        console.log(`[AUDIT][Hook][onPosition] t=${t.toFixed(4)}s currentTimeRef=${currentTimeRef.current.toFixed(4)}s`);
+      }
       currentTimeRef.current = t;
 
       // ── Auto-stop at project end ──────────────────────────────────────────
@@ -458,9 +472,46 @@ export const useNativeAudioEngine = () => {
       dispatch({ type: 'SET_CURRENT_TIME', payload: t });
     });
 
+    const PEAK_HOLD_MS = 2000;
+
+    const rmsToDb = (rms: number) =>
+      rms < 0.000001 ? -90 : Math.max(-90, 20 * Math.log10(rms));
+
     const offLevels = eng()!.onLevels((l: number[]) => {
-      // Feed master VU meters without going through Web Audio
-      nativeMasterLevelsRef.current = [l[0] ?? 0, l[1] ?? l[0] ?? 0];
+      const rmsL = l[0] ?? 0;
+      const rmsR = l[1] ?? rmsL;
+      nativeMasterLevelsRef.current = [rmsL, rmsR];
+      const dbL = rmsToDb(rmsL);
+      const dbR = rmsToDb(rmsR);
+      const now = performance.now();
+      const prev = meterValuesRef.current['master'];
+      meterValuesRef.current['master'] = {
+        L: dbL, R: dbR,
+        peakL: prev && prev.peakL > dbL && now < prev.peakLAt ? prev.peakL : dbL,
+        peakR: prev && prev.peakR > dbR && now < prev.peakRAt ? prev.peakR : dbR,
+        peakLAt: prev && prev.peakL > dbL && now < prev.peakLAt ? prev.peakLAt : now + PEAK_HOLD_MS,
+        peakRAt: prev && prev.peakR > dbR && now < prev.peakRAt ? prev.peakRAt : now + PEAK_HOLD_MS,
+        clipL: dbL >= 0 || (prev?.clipL ?? false),
+        clipR: dbR >= 0 || (prev?.clipR ?? false),
+      };
+    });
+
+    const offTrackLevels = eng()!.onTrackLevels((levels: Record<string, [number, number]>) => {
+      const now = performance.now();
+      for (const [trackId, [rmsL, rmsR]] of Object.entries(levels)) {
+        const dbL = rmsToDb(rmsL);
+        const dbR = rmsToDb(rmsR);
+        const prev = meterValuesRef.current[trackId];
+        meterValuesRef.current[trackId] = {
+          L: dbL, R: dbR,
+          peakL: prev && prev.peakL > dbL && now < prev.peakLAt ? prev.peakL : dbL,
+          peakR: prev && prev.peakR > dbR && now < prev.peakRAt ? prev.peakR : dbR,
+          peakLAt: prev && prev.peakL > dbL && now < prev.peakLAt ? prev.peakLAt : now + PEAK_HOLD_MS,
+          peakRAt: prev && prev.peakR > dbR && now < prev.peakRAt ? prev.peakRAt : now + PEAK_HOLD_MS,
+          clipL: dbL >= 0 || (prev?.clipL ?? false),
+          clipR: dbR >= 0 || (prev?.clipR ?? false),
+        };
+      }
     });
 
     const offInputLevels = eng()!.onInputLevels((l: number[]) => {
@@ -472,7 +523,7 @@ export const useNativeAudioEngine = () => {
       console.error('[NativeAudio]', msg);
     });
 
-    return () => { offPos(); offEnded(); offLevels(); offInputLevels(); offErr(); };
+    return () => { offPos(); offEnded(); offLevels(); offTrackLevels(); offInputLevels(); offErr(); };
   }, [
     currentTimeRef, dispatch, nativeMasterLevelsRef, livePeaksRef,
     stopAnimLoop, stopMetronome,
@@ -549,15 +600,19 @@ export const useNativeAudioEngine = () => {
   playFnRef.current = play;
 
   const pause = useCallback(async () => {
+    const _t0 = performance.now();
+    console.log(`[AUDIT][Hook][pause] ENTER isPlaying=${isPlayingRef.current} currentTime=${currentTimeRef.current.toFixed(4)}s`);
     isPlayingRef.current   = false;
     punchArmedRef.current  = false;
     punchWritingRef.current = false;
     stopAnimLoop();
     stopMetronome();
     if (isRecordingRef.current) await stopRecordingSessionRef.current?.();
+    console.log(`[AUDIT][Hook][pause] sending IPC stop t=${performance.now().toFixed(1)}ms`);
     await eng()?.stop();
+    console.log(`[AUDIT][Hook][pause] IPC stop resolved elapsed=${(performance.now() - _t0).toFixed(1)}ms`);
     dispatch({ type: 'SET_PLAYING', payload: false });
-  }, [stopAnimLoop, stopMetronome, dispatch]);
+  }, [stopAnimLoop, stopMetronome, dispatch, currentTimeRef]);
 
   const stop = useCallback(async () => {
     isPlayingRef.current   = false;

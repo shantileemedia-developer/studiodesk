@@ -379,13 +379,29 @@ function sendToRenderer(channel: string, ...args: any[]) {
 }
 
 // Throttle position events to ~20 ms (50 Hz) — enough for smooth scrubbing
-let lastPosSend = 0;
-engine.on('position',    (t: number) => {
+let lastPosSend  = 0;
+let auditPosCnt  = 0;  // counts sent position events; log every ~50 (≈ 1 s)
+engine.on('position', (t: number) => {
   const now = Date.now();
-  if (now - lastPosSend >= 20) { lastPosSend = now; sendToRenderer('audio:position', t); }
+  if (now - lastPosSend >= 20) {
+    lastPosSend = now;
+    sendToRenderer('audio:position', t);
+    auditPosCnt++;
+    if (auditPosCnt % 50 === 0) {
+      console.log(`[AUDIT][IPC][position] sent t=${t.toFixed(4)}s wallMs=${now}`);
+    }
+  }
 });
 engine.on('levels',      (l: number[]) => sendToRenderer('audio:levels',      l));
 engine.on('inputLevels', (l: number[]) => sendToRenderer('audio:inputLevels', l));
+let lastTrackLevelsSend = 0;
+engine.on('trackLevels', (levels: Record<string, [number, number]>) => {
+  const now = Date.now();
+  if (now - lastTrackLevelsSend >= 20) {
+    lastTrackLevelsSend = now;
+    sendToRenderer('audio:trackLevels', levels);
+  }
+});
 engine.on('ended',       (t: number)   => sendToRenderer('audio:ended',       t));
 engine.on('error',       (m: string)   => sendToRenderer('audio:error',       m));
 engine.on('unavailable', ()            => sendToRenderer('audio:unavailable'));
@@ -395,11 +411,17 @@ engine.on('busChunk', (busId: string, chunk: Buffer) =>
 
 ipcMain.handle('audio:isAvailable',  () => nativeAudioAvailable);
 ipcMain.handle('audio:getDevices',   () => engine.getDevices());
+ipcMain.handle('audio:getHostAPIs',  () => ({ HostAPIs: [] }));
 
 ipcMain.handle('audio:play', async (_e, specs, startTime, outDeviceId, sr) => {
   await engine.startPlayback(specs, startTime, outDeviceId ?? -1, sr ?? 48000);
 });
-ipcMain.handle('audio:stop',  () => engine.stopPlayback());
+ipcMain.handle('audio:stop', () => {
+  const t0 = Date.now();
+  console.log(`[AUDIT][IPC][audio:stop] RECEIVED t=${t0}`);
+  engine.stopPlayback();
+  console.log(`[AUDIT][IPC][audio:stop] EXECUTED elapsed=${Date.now() - t0}ms`);
+});
 ipcMain.handle('audio:seek',  (_e, t: number) => engine.seek(t));
 ipcMain.handle('audio:setTrackParams', (_e, trackId: string, params: any) =>
   engine.setTrackParams(trackId, params));
@@ -462,21 +484,135 @@ ipcMain.handle('dialog:open-project-folder', async () => {
   });
 });
 
-ipcMain.handle('project:setup', async (_e, projectDir: string) => {
+async function createProjectFolders(projectDir: string): Promise<string> {
   const audioDir = path.join(projectDir, 'Audio');
-  await fs.promises.mkdir(audioDir,                          { recursive: true });
-  await fs.promises.mkdir(path.join(projectDir, 'Exports'), { recursive: true });
-  await fs.promises.mkdir(path.join(projectDir, 'Renders'), { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Project'),   { recursive: true });
+  await fs.promises.mkdir(audioDir,                           { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Waveforms'), { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Exports'),   { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Backups'),   { recursive: true });
+  await fs.promises.mkdir(path.join(projectDir, 'Cache'),     { recursive: true });
   NativeAudioEngine.setAudioDir(audioDir);
   return audioDir;
+}
+
+ipcMain.handle('project:setup', async (_e, projectDir: string) => {
+  return createProjectFolders(projectDir);
 });
 
 ipcMain.handle('project:save', async (_e, projectDir: string, json: string) => {
+  // Legacy fallback: write project.json at root
   await fs.promises.writeFile(path.join(projectDir, 'project.json'), json, 'utf-8');
 });
 
 ipcMain.handle('project:load', async (_e, projectDir: string) => {
-  return fs.promises.readFile(path.join(projectDir, 'project.json'), 'utf-8');
+  // Prefer Project/*.rsync (new format), fallback to legacy project.json
+  const projectSubDir = path.join(projectDir, 'Project');
+  try {
+    const files = await fs.promises.readdir(projectSubDir);
+    const rsync = files.find(f => f.endsWith('.rsync'));
+    if (rsync) return fs.promises.readFile(path.join(projectSubDir, rsync), 'utf-8');
+  } catch { /* Project/ subfolder may not exist yet */ }
+  // Legacy fallback: root-level project.json or .rsproj
+  try {
+    return await fs.promises.readFile(path.join(projectDir, 'project.json'), 'utf-8');
+  } catch {
+    const files = await fs.promises.readdir(projectDir);
+    const rsproj = files.find(f => f.endsWith('.rsproj'));
+    if (rsproj) return fs.promises.readFile(path.join(projectDir, rsproj), 'utf-8');
+    throw new Error('No project file found in folder.');
+  }
+});
+
+// Single-file project management
+ipcMain.handle('project:loadFile', async (_e, filePath: string) => {
+  return fs.promises.readFile(filePath, 'utf-8');
+});
+
+ipcMain.handle('project:saveFile', async (_e, filePath: string, json: string) => {
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, json, 'utf-8');
+});
+
+// Save As: shows folder picker → creates full project structure → returns paths
+ipcMain.handle('project:saveAs', async (_e, parentDir: string, name: string) => {
+  const safeName   = name.replace(/[/\\:*?"<>|]/g, '_') || 'Untitled';
+  const projectDir = path.join(parentDir, safeName);
+  const audioDir   = await createProjectFolders(projectDir);
+  const projectFile = path.join(projectDir, 'Project', safeName + '.rsync');
+  return { projectFile, audioDir, projectDir };
+});
+
+// Legacy save-as dialog (kept for backward compat; new flow uses project:saveAs)
+ipcMain.handle('project:saveAsDialog', async (_e, defaultName: string) => {
+  const result = await dialog.showSaveDialog({
+    title: 'Save Project As',
+    defaultPath: defaultName + '.rsync',
+    filters: [{ name: 'StudioLink Project', extensions: ['rsync', 'rsproj'] }],
+  });
+  return result.canceled ? null : result.filePath ?? null;
+});
+
+ipcMain.handle('project:setupFromFile', async (_e, filePath: string) => {
+  // If file is inside a Project/ subfolder (new format), root is two levels up
+  const fileDir    = path.dirname(filePath);
+  const isNewStyle = path.basename(fileDir) === 'Project';
+  const projectDir = isNewStyle ? path.dirname(fileDir) : fileDir;
+  return createProjectFolders(projectDir);
+});
+
+// Write a timestamped backup to Backups/
+ipcMain.handle('project:backup', async (_e, projectDir: string, name: string, json: string) => {
+  const backupsDir = path.join(projectDir, 'Backups');
+  await fs.promises.mkdir(backupsDir, { recursive: true });
+  const now = new Date();
+  const ts  = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '_',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+  ].join('');
+  const safeName = name.replace(/[/\\:*?"<>|]/g, '_') || 'Untitled';
+  const backupFile = path.join(backupsDir, `${safeName}_${ts}.rsync`);
+  await fs.promises.writeFile(backupFile, json, 'utf-8');
+});
+
+// Copy all audio files from one Audio/ dir to another (Save As with copy option)
+ipcMain.handle('project:copyAudio', async (_e, srcDir: string, dstDir: string) => {
+  let files: string[];
+  try { files = await fs.promises.readdir(srcDir); } catch { return; }
+  await fs.promises.mkdir(dstDir, { recursive: true });
+  for (const f of files) {
+    try {
+      const stat = await fs.promises.stat(path.join(srcDir, f));
+      if (stat.isFile()) await fs.promises.copyFile(path.join(srcDir, f), path.join(dstDir, f));
+    } catch { /* skip unreadable files */ }
+  }
+});
+
+// Search a directory tree for audio files (used by missing-file recovery)
+ipcMain.handle('fs:search-audio', async (_e, dir: string) => {
+  const audioExts = new Set(['.wav', '.mp3', '.flac', '.aiff', '.aif', '.m4a', '.aac', '.ogg']);
+  const results: string[] = [];
+  async function scan(d: string, depth: number) {
+    if (depth > 4) return;
+    let entries: fs.Dirent[];
+    try { entries = await fs.promises.readdir(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) await scan(full, depth + 1);
+      else if (e.isFile() && audioExts.has(path.extname(e.name).toLowerCase())) results.push(full);
+    }
+  }
+  await scan(dir, 0);
+  return results;
+});
+
+// Write arbitrary file data (used to save received audio files to the project Audio dir)
+ipcMain.handle('fs:write-file', async (_e, filePath: string, data: ArrayBuffer) => {
+  await fs.promises.writeFile(filePath, Buffer.from(data));
 });
 
 // ── Email (Gmail SMTP via nodemailer) ────────────────────────────────────────

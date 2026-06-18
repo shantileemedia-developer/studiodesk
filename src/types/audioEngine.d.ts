@@ -1,5 +1,11 @@
 /** Global type for the native audio engine bridge exposed by electron/preload.ts */
 
+export interface AudioHostAPI {
+  id:   number;
+  name: string;
+  type: string;
+}
+
 export interface AudioDevice {
   id:                number;
   name:              string;
@@ -27,6 +33,7 @@ export interface NativeTrackSpec {
 export interface AudioEngineAPI {
   isAvailable():   Promise<boolean>;
   getDevices():    Promise<AudioDevice[]>;
+  getHostAPIs():   Promise<{ HostAPIs: AudioHostAPI[] }>;
 
   play(specs: NativeTrackSpec[], startTime: number, outDeviceId?: number, sr?: number): Promise<void>;
   stop():          Promise<void>;
@@ -50,6 +57,7 @@ export interface AudioEngineAPI {
   onPosition(cb: (t: number) => void):   () => void;
   onLevels(cb: (l: number[]) => void):   () => void;
   onInputLevels(cb: (l: number[]) => void): () => void;
+  onTrackLevels(cb: (levels: Record<string, [number, number]>) => void): () => void;
   onEnded(cb: (t: number) => void):      () => void;
   onError(cb: (m: string) => void):      () => void;
   onUnavailable(cb: () => void):         () => void;

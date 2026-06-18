@@ -343,10 +343,11 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
   const playheadTimeDisplayRef = useRef<HTMLDivElement | null>(null);
   const rafRef                = useRef<number | null>(null);
   const zoomRef           = useRef(zoom);
-  // Wall-clock interpolation: bridge the ~20 ms gap between IPC position events
-  // so the cursor moves at 60 fps instead of stuttering at 50 Hz.
-  const posSnapRef        = useRef(0);   // last position value received from IPC
-  const posWallRef        = useRef(0);   // performance.now() when that value arrived
+  // Wall-clock playback anchor: set once when play starts, extrapolated every frame.
+  // Re-anchoring on every IPC event causes stutters when setInterval fires late.
+  const posSnapRef        = useRef(0);   // position at anchor moment
+  const posWallRef        = useRef(0);   // performance.now() at anchor moment
+  const wasPlayingRef     = useRef(false); // detects play/stop transitions
   zoomRef.current         = zoom;
 
   // Track height helpers
@@ -792,17 +793,62 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
       ctx2d.fill();
     };
 
+    // ── AUDIT counters (shared across frames, closed over) ───────────────────
+    let _auditRafCnt     = 0;
+    let _auditLastPlaying = false;
+
     const tick = () => {
       // Interpolate between IPC position events (arrive ~every 20 ms) using the
       // wall clock so the cursor moves at 60 fps instead of stuttering.
-      const ipcPos = currentTimeRef.current;
-      if (ipcPos !== posSnapRef.current) {
-        posSnapRef.current = ipcPos;
-        posWallRef.current = performance.now();
+      const ipcPos   = currentTimeRef.current;
+      const nowMs    = performance.now();
+      const playing  = isPlayingRef.current;
+
+      // ── AUDIT: log state transitions ────────────────────────────────────────
+      if (playing !== _auditLastPlaying) {
+        console.log(
+          `[AUDIT][RAF][tick] TRANSITION playing=${playing} ` +
+          `ipcPos=${ipcPos.toFixed(4)}s ` +
+          `posSnap=${posSnapRef.current.toFixed(4)}s ` +
+          `reactTime=${state.transport.currentTime?.toFixed(4) ?? 'n/a'}s`,
+        );
+        _auditLastPlaying = playing;
       }
-      const elapsed = isPlayingRef.current
-        ? Math.min((performance.now() - posWallRef.current) / 1000, 0.2)
-        : 0;
+      // Log every ~60 frames (~1 s) while playing
+      _auditRafCnt++;
+      if (playing && _auditRafCnt % 60 === 0) {
+        const predicted = posSnapRef.current + (nowMs - posWallRef.current) / 1000;
+        console.log(
+          `[AUDIT][RAF][tick] ipcPos=${ipcPos.toFixed(4)}s ` +
+          `predicted=${predicted.toFixed(4)}s ` +
+          `drift=${((ipcPos - predicted) * 1000).toFixed(1)}ms ` +
+          `reactTime=${state.transport.currentTime?.toFixed(4) ?? 'n/a'}s`,
+        );
+      }
+
+      if (playing && !wasPlayingRef.current) {
+        // Play just started — anchor to current IPC position and local wall clock.
+        posSnapRef.current  = ipcPos;
+        posWallRef.current  = nowMs;
+      } else if (!playing) {
+        // Stopped — snap cursor to exact IPC position, reset anchor.
+        posSnapRef.current  = ipcPos;
+        posWallRef.current  = nowMs;
+      } else {
+        // Playing — only re-anchor on a seek (jump > 200 ms from predicted position).
+        const predicted = posSnapRef.current + (nowMs - posWallRef.current) / 1000;
+        if (Math.abs(ipcPos - predicted) > 0.2) {
+          console.log(
+            `[AUDIT][RAF][tick] RE-ANCHOR seek detected ` +
+            `ipcPos=${ipcPos.toFixed(4)}s predicted=${predicted.toFixed(4)}s`,
+          );
+          posSnapRef.current = ipcPos;
+          posWallRef.current = nowMs;
+        }
+      }
+      wasPlayingRef.current = playing;
+
+      const elapsed = playing ? (nowMs - posWallRef.current) / 1000 : 0;
       const t = posSnapRef.current + elapsed;
       const x = t * zoomRef.current * BASE_PX_PER_SEC;
       if (playheadRulerRef.current) playheadRulerRef.current.style.left = `${x}px`;
@@ -1382,7 +1428,7 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
     const url = URL.createObjectURL(new Blob([rawBuffer]));
     try {
       const actx = new AudioContext();
-      const buf = await actx.decodeAudioData(rawBuffer);
+      const buf = await actx.decodeAudioData(rawBuffer.slice(0));
       const { left: peaks, right: rawPeaksR } = await generatePeaksStereo(buf);
       const peaksR = track.type === 'stereo' ? rawPeaksR : null;
       const duration = buf.duration;
@@ -1390,45 +1436,52 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
       const poolItemId = `pool_${Date.now()}`;
       const name = fileName.replace(/\.[^.]+$/, '');
 
-      // Pre-write a float32 stereo WAV so the native engine can play this import
-      // directly via OS path — same path as recorded audio, no per-play HTTP fetch.
+      // Build the float32 stereo WAV once — reused for both project Audio folder
+      // and the temp path the native engine uses during this session.
+      const frames = buf.length;
+      const sr = buf.sampleRate;
+      const L = buf.getChannelData(0);
+      const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+      const wav = new ArrayBuffer(44 + frames * 8);
+      const dv = new DataView(wav);
+      const ws = (off: number, str: string) =>
+        str.split('').forEach((c, i) => dv.setUint8(off + i, c.charCodeAt(0)));
+      ws(0, 'RIFF'); dv.setUint32(4, 36 + frames * 8, true);
+      ws(8, 'WAVE');
+      ws(12, 'fmt '); dv.setUint32(16, 16, true);
+      dv.setUint16(20, 3, true); dv.setUint16(22, 2, true);
+      dv.setUint32(24, sr, true); dv.setUint32(28, sr * 8, true);
+      dv.setUint16(32, 8, true); dv.setUint16(34, 32, true);
+      ws(36, 'data'); dv.setUint32(40, frames * 8, true);
+      const f32 = new Float32Array(wav, 44);
+      for (let i = 0; i < frames; i++) { f32[i * 2] = L[i]; f32[i * 2 + 1] = R[i]; }
+
+      // Write to project Audio folder (native path) — this is the persistent copy
+      let savedLocalFileName: string | undefined;
+      const nativeAudioDir = localStorage.getItem('sd_audioDirPath');
+      if (nativeAudioDir && window.studioRC?.writeFile) {
+        try {
+          const wavName = `${name}.wav`;
+          const sep = nativeAudioDir.includes('\\') ? '\\' : '/';
+          await window.studioRC.writeFile(nativeAudioDir + sep + wavName, wav);
+          savedLocalFileName = wavName;
+        } catch { /* non-fatal */ }
+      }
+
+      // Also write to temp dir so native engine can play it this session
+      // without re-fetching (falls back to resolveFilePath if writeTemp fails)
       let nativeLocalPath: string | undefined;
       if (window.audioEngine?.writeTemp) {
         try {
-          const frames = buf.length;
-          const sr = buf.sampleRate;
-          const L = buf.getChannelData(0);
-          const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
-          const wav = new ArrayBuffer(44 + frames * 8);
-          const dv = new DataView(wav);
-          const ws = (off: number, str: string) =>
-            str.split('').forEach((c, i) => dv.setUint8(off + i, c.charCodeAt(0)));
-          ws(0, 'RIFF'); dv.setUint32(4, 36 + frames * 8, true);
-          ws(8, 'WAVE');
-          ws(12, 'fmt '); dv.setUint32(16, 16, true);
-          dv.setUint16(20, 3, true);           // IEEE float PCM
-          dv.setUint16(22, 2, true);           // stereo
-          dv.setUint32(24, sr, true);
-          dv.setUint32(28, sr * 8, true);      // byte rate (sr × 2ch × 4B)
-          dv.setUint16(32, 8, true);           // block align
-          dv.setUint16(34, 32, true);          // bits per sample
-          ws(36, 'data'); dv.setUint32(40, frames * 8, true);
-          const samples = new Float32Array(wav, 44);
-          for (let i = 0; i < frames; i++) {
-            samples[i * 2]     = L[i];
-            samples[i * 2 + 1] = R[i];
-          }
           nativeLocalPath = await window.audioEngine.writeTemp(`import_${poolItemId}.wav`, wav);
-        } catch {
-          // non-fatal: resolveFilePath falls back to decoding from audioUrl
-        }
+        } catch { /* non-fatal */ }
       }
 
       const poolItem: PoolItem = {
         id: poolItemId,
         name,
         audioUrl: url,
-        localFileName: fileName,
+        localFileName: savedLocalFileName ?? fileName,
         duration,
         createdAt: new Date(),
         waveformPeaks: peaks,

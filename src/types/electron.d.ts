@@ -16,6 +16,14 @@ declare global {
       setup:  (projectDir: string) => Promise<string>;
       save:   (projectDir: string, json: string) => Promise<void>;
       load:   (projectDir: string) => Promise<string>;
+      loadFile:     (filePath: string) => Promise<string>;
+      saveFile:     (filePath: string, json: string) => Promise<void>;
+      saveAsDialog: (defaultName: string) => Promise<string | null>;
+      setupFromFile:(filePath: string) => Promise<string>;
+      saveAs:    (parentDir: string, name: string) => Promise<{ projectFile: string; audioDir: string; projectDir: string }>;
+      backup:    (projectDir: string, name: string, json: string) => Promise<void>;
+      copyAudio: (srcDir: string, dstDir: string) => Promise<void>;
+      searchAudio: (dir: string) => Promise<string[]>;
     };
     studioClipboard?: {
       write: (text: string) => Promise<void>;
@@ -45,7 +53,8 @@ declare global {
        * Read a local file as Uint8Array.
        * Used with openAudioDialog() to load the chosen file content.
        */
-      readFile: (filePath: string) => Promise<Uint8Array>;
+      readFile:  (filePath: string) => Promise<Uint8Array>;
+      writeFile: (filePath: string, data: ArrayBuffer) => Promise<void>;
     };
   }
 

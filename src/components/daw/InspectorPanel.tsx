@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings2, Volume2, Target, SlidersHorizontal, ChevronDown, Power } from 'lucide-react';
+import { Settings2, Target, SlidersHorizontal, ChevronDown, Power } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
 import './InspectorPanel.css';
 
@@ -41,10 +41,6 @@ const InspectorPanel = ({ onClose }: { onClose?: () => void }) => {
       </div>
     );
   }
-
-  const panLabel = Math.abs(track.pan) < 0.03
-    ? 'C'
-    : `${track.pan > 0 ? 'R' : 'L'}${Math.round(Math.abs(track.pan) * 100)}`;
 
   return (
     <div className="daw-panel inspector-panel">
@@ -174,53 +170,6 @@ const InspectorPanel = ({ onClose }: { onClose?: () => void }) => {
               ))}
             </div>
           )}
-        </div>
-
-        {/* Fader + Pan */}
-        <div className="inspector-fader-area">
-          <Volume2 size={16} color={track.color} />
-
-          {/* Volume */}
-          <div className="inspector-control-row">
-            <span className="inspector-label">VOL</span>
-            <input
-              type="range"
-              min="0"
-              max="1.5"
-              step="0.01"
-              value={track.volume}
-              onChange={e => dispatch({
-                type: 'UPDATE_TRACK',
-                payload: { id: track.id, updates: { volume: parseFloat(e.target.value) } },
-              })}
-              className="inspector-volume-slider"
-              style={{ width: 120 }}
-            />
-            <span className="fader-value">{(track.volume * 100).toFixed(0)}%</span>
-          </div>
-
-          {/* Pan */}
-          <div className="inspector-control-row">
-            <span className="inspector-label">PAN</span>
-            <input
-              type="range"
-              min="-1"
-              max="1"
-              step="0.01"
-              value={track.pan}
-              onChange={e => dispatch({
-                type: 'UPDATE_TRACK',
-                payload: { id: track.id, updates: { pan: parseFloat(e.target.value) } },
-              })}
-              onDoubleClick={() => dispatch({
-                type: 'UPDATE_TRACK',
-                payload: { id: track.id, updates: { pan: 0 } },
-              })}
-              className="inspector-pan-slider"
-              style={{ width: 120 }}
-            />
-            <span className="fader-value" style={{ minWidth: 28 }}>{panLabel}</span>
-          </div>
         </div>
 
         {/* Clip Gain — visible when a region is selected */}

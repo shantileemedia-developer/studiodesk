@@ -36,9 +36,10 @@ interface UseWebRTCOptions {
   onInputEvent?: (event: RemoteInputEvent, source: 'app' | 'desktop') => void;
   onDawControlGranted?: () => void;
   onDawControlRevoked?: () => void;
+  audioInputDeviceId?: string;
 }
 
-export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInputEvent, onDawControlGranted, onDawControlRevoked }: UseWebRTCOptions) => {
+export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInputEvent, onDawControlGranted, onDawControlRevoked, audioInputDeviceId }: UseWebRTCOptions) => {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [remoteDawStream, setRemoteDawStream] = useState<MediaStream | null>(null);
@@ -517,13 +518,14 @@ export const useWebRTC = ({ roomCode, userId, isInitiator, getDawStream, onInput
       const nativeAvail = await window.audioEngine?.isAvailable().catch(() => false);
       // Low-latency audio constraints: both sides use headphones in a studio,
       // so echo cancellation and noise suppression are unnecessary and add latency.
-      const LOW_LAT_AUDIO = {
+      const LOW_LAT_AUDIO: MediaTrackConstraints = {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
-        // Chromium honours this hint to minimise capture buffer size
-        latency: 0,
-      } as MediaTrackConstraints;
+        ...(audioInputDeviceId && audioInputDeviceId !== 'default'
+          ? { deviceId: { exact: audioInputDeviceId } }
+          : {}),
+      };
 
       const VIDEO_CONSTRAINTS = {
         width:     { ideal: 1280 },

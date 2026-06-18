@@ -2,7 +2,7 @@
   width: var(--tracklist-w, 210px);
   min-width: 160px;
   max-width: 320px;
-  background-color: #212225;
+  background-color: #1c1d20;
   border-right: 1px solid #1a1b1e;
   display: flex;
   flex-direction: column;
@@ -18,9 +18,9 @@
 /* Unified header â€” spans bar-ruler height (36px) + time-ruler height (22px) = 58px total.
    Kept as one block so the time-ruler color doesn't bleed visually into the track strip. */
 .track-ruler-header {
-  height: 58px;
-  background-color: #2a2b2e;
-  border-bottom: 1px solid #1a1b1e;
+  height: 48px;
+  background-color: #1c1d20;
+  border-bottom: 1px solid #252629;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -226,9 +226,9 @@
 }
 
 .track-header {
-  border-bottom: 1px solid #1a1b1e;
+  border-bottom: 1px solid #3a3c44;
   display: flex;
-  background-color: #212225;
+  background-color: #1c1d20;
   cursor: pointer;
   position: relative;
 }

@@ -748,6 +748,7 @@ interface DawContextValue {
   recordingStartTimeRef: React.MutableRefObject<number>;
   animFrameRef: React.MutableRefObject<number | null>;
   masterStreamRef: React.MutableRefObject<MediaStreamAudioDestinationNode | null>;
+  nativeStreamRef: React.MutableRefObject<MediaStream | null>;
   userRole: 'artist' | 'engineer';
   livePeaksRef: React.MutableRefObject<number[]>;
   trackAnalysersRef: React.MutableRefObject<Record<string, AnalyserNode>>;
@@ -762,6 +763,13 @@ interface DawContextValue {
   setProjectDirHandle: (handle: any | null) => void;
   audioDirHandle: any | null;
   setAudioDirHandle: (handle: any | null) => void;
+
+  // Electron native project file path (e.g. D:/Projects/My Session/My Session.rsproj)
+  projectFilePath: string | null;
+  setProjectFilePath: (p: string | null) => void;
+  // Native audio dir derived from project file (e.g. D:/Projects/My Session/Audio/)
+  audioDirPath: string | null;
+  setAudioDirPath: (p: string | null) => void;
 
   // Set by useAudioEngine so any component can trigger a re-upload by pool item id
   retryUploadRef: React.MutableRefObject<((poolItemId: string) => void) | null>;
@@ -786,6 +794,7 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
   const recordingStartTimeRef = useRef(0);
   const livePeaksRef = useRef<number[]>([]);
   const masterStreamRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const nativeStreamRef = useRef<MediaStream | null>(null);
   const trackAnalysersRef  = useRef<Record<string, AnalyserNode>>({});
   const trackGainsRef      = useRef<Record<string, GainNode>>({});
   const trackPannersRef    = useRef<Record<string, StereoPannerNode>>({});
@@ -795,6 +804,12 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
 
   const [projectDirHandle, setProjectDirHandle] = React.useState<any | null>(null);
   const [audioDirHandle, setAudioDirHandle] = React.useState<any | null>(null);
+  const [projectFilePath, setProjectFilePath] = React.useState<string | null>(
+    () => localStorage.getItem('sd_projectFilePath') ?? null
+  );
+  const [audioDirPath, setAudioDirPath] = React.useState<string | null>(
+    () => localStorage.getItem('sd_audioDirPath') ?? null
+  );
   const retryUploadRef = useRef<((poolItemId: string) => void) | null>(null);
   const meterValuesRef = useRef<Record<string, MeterValue>>({});
   const clearMeterClip = useCallback((id: string) => {
@@ -816,8 +831,9 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
 
   return (
     <DawContext.Provider value={{
-      state, dispatch, originalDispatch, setDispatchMiddleware, currentTimeRef, audioCtxRef, recordingStartTimeRef, animFrameRef, masterStreamRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, nativeMasterLevelsRef, userRole,
+      state, dispatch, originalDispatch, setDispatchMiddleware, currentTimeRef, audioCtxRef, recordingStartTimeRef, animFrameRef, masterStreamRef, nativeStreamRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, nativeMasterLevelsRef, userRole,
       projectDirHandle, setProjectDirHandle, audioDirHandle, setAudioDirHandle,
+      projectFilePath, setProjectFilePath, audioDirPath, setAudioDirPath,
       retryUploadRef,
       meterValuesRef, clearMeterClip,
     }}>

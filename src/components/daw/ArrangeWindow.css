@@ -2,7 +2,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: #121212;
+  background-color: #2e3036;
   overflow: hidden;
   position: relative;
   min-width: 0;
@@ -469,7 +469,7 @@
 }
 
 .timeline-ruler {
-  background-color: #2a2b2e;
+  background-color: #16171a;
   position: relative;
   overflow: hidden;
   flex-shrink: 0;
@@ -477,10 +477,10 @@
 }
 
 .bar-ruler {
-  height: 36px;
-  border-bottom: 1px solid #1e1f22;
+  height: 26px;
+  border-bottom: 1px solid #1c1d1f;
   cursor: pointer;
-  background-color: #2a2b2e;
+  background-color: #16171a;
   overflow: visible; /* allow playhead triangle to extend over time-ruler */
   z-index: 2;
 }
@@ -493,9 +493,10 @@
 
 .time-ruler {
   height: 22px;
-  border-bottom: 1px solid #1a1b1e;
+  border-top: 3px solid #1c1d1f;
+  border-bottom: 1px solid #111214;
   cursor: default;
-  background-color: #212325;
+  background-color: #18191c;
   z-index: 1;
 }
 
@@ -513,7 +514,7 @@
   top: 0;
   width: 1px;
   height: 100%;
-  background-color: #555;
+  background-color: #6a6c72;
 }
 
 .ruler-bar-label {
@@ -522,7 +523,7 @@
   left: 4px;
   font-size: 10px;
   font-weight: 600;
-  color: #b0b0b0;
+  color: #dcdee4;
   font-family: 'Consolas', 'Courier New', monospace;
   white-space: nowrap;
   line-height: 1;
@@ -532,17 +533,32 @@
 /* Beat ticks inside a bar (beats 2, 3, 4) */
 .ruler-beat-tick {
   position: absolute;
-  top: 60%;      /* start lower — shorter tick */
-  bottom: 0;
+  top: 0;
+  height: 40%;
   width: 1px;
-  background-color: #3e3f43;
+  background-color: #36383e;
   pointer-events: none;
 }
 
 /* Half-bar tick (beat 3 when it's the midpoint) is slightly taller */
 .ruler-beat-tick.half {
-  top: 40%;
-  background-color: #484a4f;
+  height: 60%;
+  background-color: #404248;
+}
+
+/* Sub-beat ticks (1/8 and 1/16 note subdivisions) */
+.ruler-sub-tick {
+  position: absolute;
+  top: 0;
+  height: 22%;
+  width: 1px;
+  background-color: #2e3035;
+  pointer-events: none;
+}
+
+.ruler-sub-tick.sixteenth {
+  height: 14%;
+  background-color: #292b30;
 }
 
 /* ── Time ruler ticks ───────────────────────────── */
@@ -557,15 +573,15 @@
   content: '';
   position: absolute;
   left: 0;
-  bottom: 0;
+  top: 0;
   width: 1px;
   height: 45%;
-  background-color: #3a3b3f;
+  background-color: #4e5058;
 }
 
 .time-tick-minute::before {
   height: 65%;
-  background-color: #545660;
+  background-color: #62646e;
 }
 
 .time-tick-label {
@@ -573,14 +589,30 @@
   top: 3px;
   left: 3px;
   font-size: 9px;
-  color: #585a5e;
+  color: #9496a0;
   font-family: 'Consolas', 'Courier New', monospace;
   white-space: nowrap;
   line-height: 1;
 }
 
 .time-tick-minute .time-tick-label {
-  color: #7a7c84;
+  color: #c0c2cc;
+}
+
+.time-tick-sub {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+}
+.time-tick-sub::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 28%;
+  background-color: #323339;
 }
 
 /* ── Playhead ───────────────────────────────────── */
@@ -588,11 +620,11 @@
   position: absolute;
   top: 0;
   height: 100%;
-  width: 2px;
+  width: 1px;
   background-color: #00ffcc;
   z-index: 10;
   cursor: ew-resize;
-  box-shadow: 0 0 6px rgba(0, 255, 204, 0.5);
+  box-shadow: 0 0 4px rgba(0, 255, 204, 0.45);
 }
 
 .playhead-triangle {
@@ -773,7 +805,7 @@
 
 .arrange-track {
   height: 80px;
-  border-bottom: 1px solid #1a1b1e;
+  border-bottom: 1px solid #3a3c44;
   position: relative;
 }
 

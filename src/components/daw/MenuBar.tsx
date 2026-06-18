@@ -109,23 +109,39 @@ const MenuBar: React.FC<MenuBarProps> = ({
   const barRef = useRef<HTMLDivElement>(null);
   const clipboardRef = useRef<Region | null>(null);
 
-  const { dispatch, state, setProjectDirHandle, setAudioDirHandle, projectDirHandle, audioDirHandle, currentTimeRef } = useDaw();
+  const { dispatch, state, setProjectDirHandle, setAudioDirHandle, projectDirHandle, audioDirHandle, currentTimeRef, projectFilePath, setProjectFilePath, setAudioDirPath } = useDaw();
 
   // Auto-restore the last saved project when the artist re-enters a session.
-  // Runs once on mount; only fires for the Electron native path (window.studioProject).
+  // Prefers the new .rsproj path, falls back to legacy projectDirPath.
   const autoLoadedRef = useRef(false);
   useEffect(() => {
-    if (autoLoadedRef.current || isEngineer || !window.studioProject || !projectDirPath) return;
+    if (autoLoadedRef.current || isEngineer || !window.studioProject) return;
+    const filePath = projectFilePath;
+    const dirPath  = projectDirPath;
+    if (!filePath && !dirPath) return;
     autoLoadedRef.current = true;
     (async () => {
       try {
-        const json = await window.studioProject!.load(projectDirPath);
+        let json: string;
+        let audioDir: string | null = null;
+
+        if (filePath && window.studioProject!.loadFile != null) {
+          json     = await window.studioProject!.loadFile(filePath);
+          audioDir = await window.studioProject!.setupFromFile(filePath).catch(() => null);
+          if (audioDir) {
+            setAudioDirPath(audioDir);
+            localStorage.setItem('sd_audioDirPath', audioDir);
+          }
+        } else if (dirPath) {
+          json     = await window.studioProject!.load(dirPath);
+          audioDir = await window.studioProject!.setup(dirPath).catch(() => null);
+        } else return;
+
         const saved = JSON.parse(json);
 
         // Restore local audio files (blob/file URLs were stripped on save).
-        if (window.studioRC?.readFile) {
+        if (audioDir && window.studioRC?.readFile) {
           try {
-            const audioDir = await window.studioProject!.setup(projectDirPath);
             const sep = audioDir.includes('\\') ? '\\' : '/';
             const urlMap: Record<string, string> = {};
             for (const item of (saved.poolItems ?? []) as PoolItem[]) {
@@ -133,7 +149,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
                 try {
                   const bytes = await window.studioRC.readFile(audioDir + sep + item.localFileName);
                   urlMap[item.id] = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
-                } catch { /* file missing — keep blank URL */ }
+                } catch { /* file missing */ }
               }
             }
             if (Object.keys(urlMap).length > 0) {
@@ -145,11 +161,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
                 return src && urlMap[src.id] ? { ...r, audioUrl: urlMap[src.id] } : r;
               });
             }
-          } catch { /* audio restore failed — continue with saved URLs */ }
+          } catch { /* audio restore failed */ }
         }
 
         dispatch({ type: 'SET_STATE', payload: saved });
-        toast(`Project restored: ${saved.projectName ?? projectDirPath.replace(/.*[\\/]/, '')}`);
+        toast(`Project restored: ${saved.projectName ?? 'Untitled'}`);
       } catch { /* no saved project — start fresh */ }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,6 +178,11 @@ const MenuBar: React.FC<MenuBarProps> = ({
   useEffect(() => {
     if (!editingName) setNameInput(projectName);
   }, [projectName, editingName]);
+
+  // Sync Electron window title
+  useEffect(() => {
+    document.title = `${projectName} — RiddimSync`;
+  }, [projectName]);
 
   const toast = useCallback((msg: string) => {
     setLocalToast(msg);
@@ -184,7 +205,17 @@ const MenuBar: React.FC<MenuBarProps> = ({
   const handleSave = useCallback(async (dirHandle = projectDirHandle) => {
     const json = serializeForSave(state);
 
-    // Electron native path — save via main-process IPC (artist only)
+    // New Cubase-style: save to .rsproj file path
+    if (window.studioProject?.saveFile && projectFilePath) {
+      try {
+        await window.studioProject.saveFile(projectFilePath, json);
+        addToRecent(state.projectName);
+        toast('Project saved.');
+        return;
+      } catch (err) { console.error('Native save-file error:', err); }
+    }
+
+    // Legacy: save project.json inside project folder
     if (window.studioProject && projectDirPath) {
       try {
         await window.studioProject.save(projectDirPath, json);
@@ -203,11 +234,34 @@ const MenuBar: React.FC<MenuBarProps> = ({
       toast('Project saved.');
     } catch (err) { console.error('Save error:', err); toast('Save failed.'); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectDirHandle, projectDirPath, state, serializeForSave, toast, addToRecent]);
+  }, [projectDirHandle, projectDirPath, projectFilePath, state, serializeForSave, toast, addToRecent]);
 
   const handleSaveAs = useCallback(async () => {
+    // Electron Cubase-style: Save As dialog → .rsproj file
+    if (window.studioProject?.saveAsDialog) {
+      try {
+        const filePath = await window.studioProject.saveAsDialog(state.projectName);
+        if (!filePath) return;
+        const name     = filePath.replace(/.*[\\/]/, '').replace(/\.rsproj$/i, '');
+        const audioDir = await window.studioProject.setupFromFile(filePath);
+        const json     = serializeForSave({ ...state, projectName: name });
+        await window.studioProject.saveFile(filePath, json);
+        setProjectFilePath(filePath);
+        localStorage.setItem('sd_projectFilePath', filePath);
+        setAudioDirPath(audioDir);
+        localStorage.setItem('sd_audioDirPath', audioDir);
+        dispatch({ type: 'RENAME_PROJECT', payload: name });
+        addToRecent(name);
+        toast(`Saved: ${name}`);
+      } catch (err: any) {
+        if (err.name !== 'AbortError') toast('Save failed.');
+      }
+      return;
+    }
+
+    // Browser fallback (FSAA)
     if (!('showDirectoryPicker' in window)) {
-      alert('Local folder saving is only supported in Chrome or Edge.');
+      alert('Local folder saving is only supported in Chrome, Edge, or the desktop app.');
       return;
     }
     try {
@@ -228,7 +282,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
     } catch (err: any) {
       if (err.name !== 'AbortError') alert('Failed to save project. Grant folder permissions and try again.');
     }
-  }, [state, serializeForSave, dispatch, setProjectDirHandle, setAudioDirHandle, toast, addToRecent]);
+  }, [state, serializeForSave, dispatch, setProjectDirHandle, setAudioDirHandle, setProjectFilePath, setAudioDirPath, toast, addToRecent]);
 
 
   // Electron-native "Set Project Folder…" — uses main-process dialog to avoid
@@ -693,12 +747,6 @@ const MenuBar: React.FC<MenuBarProps> = ({
       ],
     },
     {
-      label: 'Audio',
-      items: [
-        { label: 'Audio Setup…', shortcut: 'F4', onClick: onOpenAudioPrefs },
-      ],
-    },
-    {
       label: 'Transport',
       items: [
         { label: 'Play',            shortcut: 'Space',  onClick: () => dispatch({ type: 'SET_PLAYING', payload: !state.transport.isPlaying }) },
@@ -846,16 +894,6 @@ const MenuBar: React.FC<MenuBarProps> = ({
           )}
         </div>
 
-        {window.electronWindow && (
-          <div className="window-controls">
-            <button className="wc-btn wc-minimize" title="Minimize"
-              onClick={() => window.electronWindow!.minimize()}>─</button>
-            <button className="wc-btn wc-maximize" title="Maximize / Restore"
-              onClick={() => window.electronWindow!.maximize()}>□</button>
-            <button className="wc-btn wc-close" title="Close"
-              onClick={() => window.electronWindow!.close()}>✕</button>
-          </div>
-        )}
       </div>
 
       {/* ── Local toast ── */}

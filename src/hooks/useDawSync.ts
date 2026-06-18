@@ -197,6 +197,7 @@ export const useDawSync = (
 
     channel.on('broadcast', { event: 'transport-stop' }, ({ payload }) => {
       const { stopPosition } = payload as { stopPosition: number };
+      console.log('[DawSync] transport-stop received from peer, stopPosition=', stopPosition);
       originalDispatch({ type: 'SET_PLAYING', payload: false, fromSync: true });
       onTransportSyncRef.current?.(false, stopPosition);
     });
@@ -353,7 +354,7 @@ export const useDawSync = (
         room_code: roomCode,
         state: stateToSave,
         updated_at: new Date().toISOString(),
-      }).then(({ error }) => {
+      }, { onConflict: 'room_code' }).then(({ error }) => {
         if (error) console.error('Failed to save state to DB:', error);
       });
     }, 2000);

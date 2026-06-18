@@ -36,6 +36,9 @@
   overflow: hidden;
   min-width: 0;
   min-height: 0;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 4px;
 }
 
 /* Base Panel Styles */
@@ -45,7 +48,7 @@
 }
 
 .daw-panel-header {
-  background: linear-gradient(to bottom, #303136, #2a2b2e);
+  background: linear-gradient(to bottom, #202124, #1c1d20);
   padding: 6px 12px;
   font-size: 11px;
   font-weight: 600;
@@ -124,6 +127,56 @@
   10% { opacity: 1; transform: translate(-50%, 0); }
   90% { opacity: 1; transform: translate(-50%, 0); }
   100% { opacity: 0; transform: translate(-50%, -10px); }
+}
+
+/* ── Incoming file progress (from engineer) ────────────────────────────── */
+.daw-incoming-file {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(10, 15, 20, 0.92);
+  border: 1px solid #00e5b4;
+  border-radius: 6px;
+  padding: 8px 14px;
+  z-index: 1001;
+  min-width: 280px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+.daw-incoming-label { font-size: 12px; color: #00e5b4; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+.daw-incoming-bar {
+  flex: 1;
+  height: 4px;
+  background: #1e2530;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.daw-incoming-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00e5b4, #00ffcc);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+.daw-incoming-pct { font-size: 11px; color: #4ade80; font-weight: 600; flex-shrink: 0; }
+.daw-incoming-cancel {
+  background: none;
+  border: 1px solid rgba(255, 77, 77, 0.3);
+  border-radius: 4px;
+  color: #ff6b6b;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s;
+}
+.daw-incoming-cancel:hover {
+  background: rgba(255, 77, 77, 0.15);
+  border-color: rgba(255, 77, 77, 0.6);
 }
 
 /* ── CSS Custom Properties — density + panel sizes ── */
@@ -379,24 +432,50 @@
   gap: 8px;
   height: 28px;
   padding: 0 14px;
-  background: rgba(124, 58, 237, 0.07);
-  border-bottom: 1px solid rgba(124, 58, 237, 0.18);
+  background: #16171a;
+  border-bottom: 1px solid #252629;
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 500;
+  color: #707278;
 }
 
 .daw-rs-dot {
-  width: 6px;
-  height: 6px;
+  position: relative;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #7c3aed;
-  box-shadow: 0 0 5px #7c3aed;
+  background: #ff4444;
+  box-shadow: 0 0 6px rgba(255, 68, 68, 0.8);
   flex-shrink: 0;
 }
 
+.daw-rs-dot::before,
+.daw-rs-dot::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #ff4444;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(1);
+  animation: rs-ping 2.4s ease-out infinite;
+}
+
+.daw-rs-dot::after {
+  animation-delay: 1.2s;
+}
+
+@keyframes rs-ping {
+  0%   { transform: translate(-50%, -50%) scale(1);   opacity: 0.65; }
+  100% { transform: translate(-50%, -50%) scale(3.2); opacity: 0; }
+}
+
 .daw-rs-label {
-  color: #a78bfa;
+  color: #9496a0;
   font-weight: 700;
   letter-spacing: 0.5px;
   font-size: 10px;
@@ -405,7 +484,7 @@
 .daw-rs-sep {
   width: 1px;
   height: 14px;
-  background: rgba(124, 58, 237, 0.25);
+  background: #2e3038;
   flex-shrink: 0;
   margin: 0 2px;
 }
@@ -415,9 +494,9 @@
   border-radius: 4px;
   font-size: 10px;
   font-weight: 500;
-  color: #64748b;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid #1c1e24;
+  color: #52545c;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid #22242a;
 }
 
 .daw-rs-chip.active {
@@ -427,24 +506,25 @@
 }
 
 .daw-rs-chip.off {
-  color: #475569;
+  color: #3a3c44;
 }
 
 .daw-rs-exit-btn {
   margin-left: auto;
-  background: rgba(124, 58, 237, 0.1);
-  border: 1px solid rgba(124, 58, 237, 0.25);
+  background: rgba(255, 77, 77, 0.1);
+  border: 1px solid rgba(255, 77, 77, 0.35);
   border-radius: 5px;
-  color: #a78bfa;
+  color: #ff6b6b;
   font-size: 10px;
   font-weight: 600;
   padding: 2px 10px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
   font-family: inherit;
 }
 
 .daw-rs-exit-btn:hover {
-  background: rgba(124, 58, 237, 0.2);
-  border-color: rgba(124, 58, 237, 0.45);
+  background: rgba(255, 77, 77, 0.2);
+  border-color: rgba(255, 77, 77, 0.6);
+  color: #ff8888;
 }

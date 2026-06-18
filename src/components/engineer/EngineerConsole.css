@@ -678,3 +678,167 @@
 .ec-empty-icon  { font-size: 36px; opacity: 0.4; }
 .ec-empty-title { font-size: 16px; font-weight: 600; color: #94a3b8; margin: 0; }
 .ec-empty-sub   { font-size: 13px; color: #475569; margin: 0; line-height: 1.6; }
+
+/* ── Send to Artist ──────────────────────────────────────────────────────── */
+.ec-drop-zone {
+  border: 2px dashed #2a3a4a;
+  border-radius: 12px;
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: #0d1117;
+  margin-bottom: 20px;
+}
+.ec-drop-zone:hover        { border-color: #00e5b4; background: #0a1a18; }
+.ec-drop-zone.drag-over    { border-color: #00ffcc; background: #061512; box-shadow: 0 0 20px rgba(0,255,204,0.1); }
+.ec-drop-zone.disabled     { opacity: 0.4; cursor: default; }
+.ec-drop-icon  { font-size: 32px; margin-bottom: 10px; }
+.ec-drop-label { font-size: 15px; font-weight: 600; color: #cbd5e1; margin: 0 0 6px; }
+.ec-drop-sub   { font-size: 12px; color: #475569; margin: 0 0 16px; }
+.ec-browse-btn {
+  padding: 7px 20px;
+  background: #00e5b4;
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ec-browse-btn:hover { background: #00ffcc; }
+
+.ec-transfer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ec-transfer-item {
+  background: #0d1117;
+  border: 1px solid #1e2530;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.ec-transfer-item.done  { border-color: #1a4a3a; }
+.ec-transfer-item.error { border-color: #4a1a1a; }
+
+.ec-transfer-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.ec-transfer-name { font-size: 12px; color: #cbd5e1; font-weight: 500; }
+.ec-transfer-size { font-size: 11px; color: #475569; }
+
+.ec-transfer-bar {
+  height: 4px;
+  background: #1e2530;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ec-transfer-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00e5b4, #00ffcc);
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+.ec-transfer-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.ec-transfer-badge.done  { background: #0d2a1e; color: #4ade80; }
+.ec-transfer-badge.error { background: #2a0d0d; color: #f87171; }
+
+/* ── Settings panel ───────────────────────────────────────────────────────── */
+.ec-settings-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 640px;
+  width: 100%;
+}
+
+.ec-settings-section {
+  background: #0d1117;
+  border: 1px solid #1e2530;
+  border-radius: 10px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ec-settings-heading {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 0 0 4px;
+}
+
+.ec-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.ec-settings-label {
+  font-size: 13px;
+  color: #94a3b8;
+  width: 160px;
+  flex-shrink: 0;
+}
+
+.ec-settings-select {
+  flex: 1;
+  background: #0a0d12;
+  border: 1px solid #1e2530;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.ec-settings-select:hover  { border-color: #334155; }
+.ec-settings-select:focus  { border-color: #00e5b4; }
+
+.ec-settings-hint {
+  font-size: 12px;
+  color: #475569;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ec-driver-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.ec-driver-btn {
+  background: #0a0d12;
+  border: 1px solid #1e2530;
+  border-radius: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.ec-driver-btn:hover { border-color: #334155; color: #94a3b8; }
+.ec-driver-btn.active {
+  border-color: #00e5b4;
+  color: #00e5b4;
+  background: rgba(0, 229, 180, 0.08);
+}
+
+.ec-settings-save-row {
+  display: flex;
+  justify-content: flex-end;
+}

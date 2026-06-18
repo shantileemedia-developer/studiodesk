@@ -27,8 +27,8 @@ const TOOL_CURSORS: Record<ActiveTool, string> = {
     4, 16
   ),
   split: svgCursor(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>`,
-    6, 6
+    `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(-90, 12, 12)"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></g></svg>`,
+    12, 12
   ),
   render: svgCursor(
     `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 c-2 0-3.5 1.5-3.5 3.5 c0 1 0.4 1.9 1 2.5 L3 14.5 a1 1 0 0 0 0 1.4 l1.4 1.4 a1 1 0 0 0 1.4 0 L12 11 c0.6 0.6 1.5 1 2.5 1 c2 0 3.5-1.5 3.5-3.5 S14 2 12 2z"/><line x1="3" y1="17" x2="2" y2="21"/><circle cx="2.5" cy="22" r="1" fill="white" stroke="none"/></svg>`,
@@ -343,6 +343,10 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
   const playheadTimeDisplayRef = useRef<HTMLDivElement | null>(null);
   const rafRef                = useRef<number | null>(null);
   const zoomRef           = useRef(zoom);
+  // Wall-clock interpolation: bridge the ~20 ms gap between IPC position events
+  // so the cursor moves at 60 fps instead of stuttering at 50 Hz.
+  const posSnapRef        = useRef(0);   // last position value received from IPC
+  const posWallRef        = useRef(0);   // performance.now() when that value arrived
   zoomRef.current         = zoom;
 
   // Track height helpers
@@ -404,8 +408,12 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
 
   // ── Time ruler: pick a "nice" interval that keeps ticks ≥60px apart
   const NICE_TIME_INTERVALS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
-  const timeInterval  = NICE_TIME_INTERVALS.find(v => v * pxPerSec >= 60) ?? 600;
-  const timeTickCount = Math.ceil(totalDuration / timeInterval) + 1;
+  const timeInterval     = NICE_TIME_INTERVALS.find(v => v * pxPerSec >= 60) ?? 600;
+  const timeTickCount    = Math.ceil(totalDuration / timeInterval) + 1;
+  // Subdivision ticks: next smaller nice interval that keeps ticks ≥6px apart
+  const timeIntervalIdx  = NICE_TIME_INTERVALS.indexOf(timeInterval);
+  const subInterval      = NICE_TIME_INTERVALS.slice(0, timeIntervalIdx).reverse().find(v => v * pxPerSec >= 6) ?? null;
+  const subTickCount     = subInterval ? Math.ceil(totalDuration / subInterval) + 1 : 0;
 
   const formatTimeTick = (secs: number): string => {
     if (secs === 0) return '0';
@@ -785,7 +793,17 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
     };
 
     const tick = () => {
-      const t = currentTimeRef.current;
+      // Interpolate between IPC position events (arrive ~every 20 ms) using the
+      // wall clock so the cursor moves at 60 fps instead of stuttering.
+      const ipcPos = currentTimeRef.current;
+      if (ipcPos !== posSnapRef.current) {
+        posSnapRef.current = ipcPos;
+        posWallRef.current = performance.now();
+      }
+      const elapsed = isPlayingRef.current
+        ? Math.min((performance.now() - posWallRef.current) / 1000, 0.2)
+        : 0;
+      const t = posSnapRef.current + elapsed;
       const x = t * zoomRef.current * BASE_PX_PER_SEC;
       if (playheadRulerRef.current) playheadRulerRef.current.style.left = `${x}px`;
       if (playheadLineRef.current)  playheadLineRef.current.style.left  = `${x}px`;
@@ -810,8 +828,12 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
       if (isPlayingRef.current && contentScrollRef.current) {
         const el = contentScrollRef.current;
         const vw = el.clientWidth;
-        // Keep playhead at ~65% of viewport so content scrolls ahead of it
-        el.scrollLeft = Math.max(0, x - vw * 0.65);
+        const sl = el.scrollLeft;
+        // Page-scroll: when cursor hits the right 10% of the viewport, jump so
+        // cursor lands at 15% from the left — matches standard DAW behavior.
+        if (x - sl > vw * 0.9) {
+          el.scrollLeft = Math.max(0, x - vw * 0.15);
+        }
       }
 
       if (isRecordingRef.current && liveRegionRef.current) {
@@ -1782,22 +1804,15 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
   // ── Multi-level grid (Cubase-style: bar > beat > snap subdivision) ──
   const barPx  = secondsPerBar * pxPerSec;
   const beatPx = (60 / tempo) * pxPerSec;
-  const snapSec = state.snapOn && state.snapValue !== 'Off'
-    ? 240 / tempo / parseInt(state.snapValue.split('/')[1], 10)
-    : 0;
-  const snapGridPx = snapSec * pxPerSec;
-
   const gridImages: string[] = [];
   const gridSizes:  string[] = [];
-  gridImages.push('linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)');
+  // Bar lines — always visible
+  gridImages.push('linear-gradient(to right, rgba(255,255,255,0.42) 1px, transparent 1px)');
   gridSizes.push(`${barPx}px 100%`);
-  if (beatPx < barPx * 0.99 && beatPx >= 4) {
-    gridImages.push('linear-gradient(to right, rgba(255,255,255,0.045) 1px, transparent 1px)');
+  // Beat lines — only appear when zoomed in enough to be useful (Cubase-style)
+  if (beatPx >= 40 && beatPx < barPx * 0.99) {
+    gridImages.push('linear-gradient(to right, rgba(255,255,255,0.20) 1px, transparent 1px)');
     gridSizes.push(`${beatPx}px 100%`);
-  }
-  if (snapGridPx > 0 && snapGridPx < beatPx * 0.99 && snapGridPx >= 3) {
-    gridImages.push('linear-gradient(to right, rgba(255,255,255,0.022) 1px, transparent 1px)');
-    gridSizes.push(`${snapGridPx}px 100%`);
   }
   const gridStyle = {
     backgroundImage: gridImages.join(', '),
@@ -1844,6 +1859,20 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
                       className={`ruler-beat-tick ${isHalf ? 'half' : ''}`}
                       style={{ left: beatOffset }}
                     />
+                  );
+                })}
+                {/* 1/8-note sub-beat ticks (half-beats) */}
+                {beatPx2 / 2 >= 8 && Array.from({ length: beatsPerBar * 2 }, (_, s) => {
+                  if (s % 2 === 0) return null; // beat positions handled above
+                  return (
+                    <div key={`e_${s}`} className="ruler-sub-tick" style={{ left: s * (beatPx2 / 2) }} />
+                  );
+                })}
+                {/* 1/16-note sub-beat ticks (quarter-beats) */}
+                {beatPx2 / 4 >= 6 && Array.from({ length: beatsPerBar * 4 }, (_, s) => {
+                  if (s % 2 === 0) return null; // already covered by 1/8 or beat ticks
+                  return (
+                    <div key={`sx_${s}`} className="ruler-sub-tick sixteenth" style={{ left: s * (beatPx2 / 4) }} />
                   );
                 })}
               </div>
@@ -1901,6 +1930,13 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
         onPointerCancel={handleRulerPointerUp}
       >
         <div ref={timeRulerInnerRef} style={{ width: totalWidth, position: 'relative', height: '100%' }}>
+          {/* Subdivision ticks — rendered first so main ticks paint on top */}
+          {subInterval && Array.from({ length: subTickCount }, (_, i) => {
+            const timeSec = i * subInterval;
+            if (Math.abs(timeSec % timeInterval) < 0.0001) return null;
+            return <div key={`sub_${i}`} className="time-tick-sub" style={{ left: timeSec * pxPerSec }} />;
+          })}
+          {/* Main ticks with labels */}
           {Array.from({ length: timeTickCount }, (_, i) => {
             const timeSec = i * timeInterval;
             const x = timeSec * pxPerSec;

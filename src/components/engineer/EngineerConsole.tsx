@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabaseClient';
 import { DawProvider } from '../../context/DawContext';
 import DawWorkspace from '../daw/DawWorkspace';
 import FloatingVideoChat from '../daw/FloatingVideoChat';
+import { loadAudioPrefs } from '../daw/AudioMIDIPreferencesDialog';
+import type { AudioPrefs } from '../daw/AudioMIDIPreferencesDialog';
 import './EngineerConsole.css';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -72,8 +74,9 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
 
   const phaseRef          = useRef(phase);
   const controlChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const nullStreamRef     = useRef<MediaStreamAudioDestinationNode | null>(null);
-  const nullAudioCtxRef   = useRef<AudioContext | null>(null);
+  const nullStreamRef        = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const nullNativeStreamRef  = useRef<MediaStream | null>(null);
+  const nullAudioCtxRef      = useRef<AudioContext | null>(null);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
@@ -323,19 +326,25 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
           />
         )}
 
-        {activeTab === 'transfers' && <TransfersPanel />}
+        {activeTab === 'transfers' && <TransfersPanel roomCode={roomCode} />}
         {activeTab === 'settings'  && <SettingsPanel  />}
       </div>
 
-      {phase === 'connected' && roomCode && (
-        <FloatingVideoChat
-          userRole="engineer"
-          userId={userId}
-          roomCode={roomCode}
-          masterStreamRef={nullStreamRef}
-          audioCtxRef={nullAudioCtxRef}
-        />
-      )}
+      {phase === 'connected' && roomCode && (() => {
+        const p = loadAudioPrefs();
+        return (
+          <FloatingVideoChat
+            userRole="engineer"
+            userId={userId}
+            roomCode={roomCode}
+            masterStreamRef={nullStreamRef}
+            nativeStreamRef={nullNativeStreamRef}
+            audioCtxRef={nullAudioCtxRef}
+            audioInputDeviceId={p.inputDeviceId}
+            audioOutputDeviceId={p.outputDeviceId}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -696,22 +705,134 @@ function ClientsPanel({
   );
 }
 
-// ─── Transfers ────────────────────────────────────────────────────────────────
+// ─── Transfers / Send to Artist ───────────────────────────────────────────────
 
-function TransfersPanel() {
+interface TransferItem {
+  id: string;
+  name: string;
+  size: number;
+  progress: number;       // 0–100
+  status: 'uploading' | 'done' | 'error';
+}
+
+function TransfersPanel({ roomCode }: { roomCode: string | null }) {
+  const [transfers, setTransfers] = useState<TransferItem[]>([]);
+  const [dragOver, setDragOver]   = useState(false);
+
+  const uploadFile = useCallback(async (file: File) => {
+    if (!roomCode) { alert('Connect to an artist session first.'); return; }
+
+    const id   = `xfer_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const path = `transfers/${roomCode}/${id}_${file.name}`;
+
+    setTransfers(prev => [...prev, {
+      id, name: file.name, size: file.size, progress: 0, status: 'uploading',
+    }]);
+
+    try {
+      // Supabase storage upload with progress via XHR
+      const { error } = await supabase.storage
+        .from('audio')
+        .upload(path, file, {
+          cacheControl: '3600',
+          upsert: true,
+          // @ts-ignore — onUploadProgress is supported by supabase-js v2.x
+          onUploadProgress: (ev: { loaded: number; total: number }) => {
+            const pct = Math.round((ev.loaded / ev.total) * 100);
+            setTransfers(prev => prev.map(t => t.id === id ? { ...t, progress: pct } : t));
+          },
+        });
+
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage.from('audio').getPublicUrl(path);
+      const publicUrl = urlData.publicUrl;
+
+      // Notify artist via the control channel
+      const ch = supabase.channel(`ec-session-${roomCode}`, {
+        config: { broadcast: { ack: false } },
+      });
+      await new Promise<void>(resolve => ch.subscribe(() => resolve()));
+      await ch.send({
+        type: 'broadcast',
+        event: 'file-to-artist',
+        payload: { url: publicUrl, filename: file.name, size: file.size },
+      });
+      supabase.removeChannel(ch);
+
+      setTransfers(prev => prev.map(t => t.id === id ? { ...t, progress: 100, status: 'done' } : t));
+    } catch (err) {
+      console.error('[Send to Artist]', err);
+      setTransfers(prev => prev.map(t => t.id === id ? { ...t, status: 'error' } : t));
+    }
+  }, [roomCode]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    Array.from(e.dataTransfer.files).forEach(uploadFile);
+  }, [uploadFile]);
+
+  const handleBrowse = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*,.wav,.mp3,.flac,.aiff,.ogg,.m4a';
+    input.multiple = true;
+    input.onchange = () => { Array.from(input.files ?? []).forEach(uploadFile); };
+    input.click();
+  }, [uploadFile]);
+
+  const fmt = (bytes: number) =>
+    bytes > 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${(bytes / 1000).toFixed(0)} KB`;
+
   return (
     <div className="ec-tab-content">
       <div className="ec-content-header">
-        <h2 className="ec-content-title">Transfers</h2>
+        <h2 className="ec-content-title">Send to Artist</h2>
       </div>
-      <div className="ec-empty-state">
-        <div className="ec-empty-icon">📁</div>
-        <h3 className="ec-empty-title">File Transfer Center</h3>
-        <p className="ec-empty-sub">
-          Audio files recorded during sessions will appear here.<br />
-          Start a session and record to begin tracking transfers.
+
+      {/* Drop zone */}
+      <div
+        className={`ec-drop-zone${dragOver ? ' drag-over' : ''}${!roomCode ? ' disabled' : ''}`}
+        onDragOver={e => { e.preventDefault(); if (roomCode) setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={roomCode ? handleBrowse : undefined}
+      >
+        <div className="ec-drop-icon">📤</div>
+        <p className="ec-drop-label">
+          {dragOver ? 'Drop to send' : 'Drag audio files here'}
         </p>
+        <p className="ec-drop-sub">
+          {roomCode ? 'Files are instantly saved to the Artist\'s project folder' : 'Connect to a session first'}
+        </p>
+        {roomCode && (
+          <button className="ec-browse-btn" onClick={e => { e.stopPropagation(); handleBrowse(); }}>
+            Browse Files
+          </button>
+        )}
       </div>
+
+      {/* Transfer list */}
+      {transfers.length > 0 && (
+        <div className="ec-transfer-list">
+          {transfers.map(t => (
+            <div key={t.id} className={`ec-transfer-item ${t.status}`}>
+              <div className="ec-transfer-info">
+                <span className="ec-transfer-name">{t.name}</span>
+                <span className="ec-transfer-size">{fmt(t.size)}</span>
+              </div>
+              {t.status === 'uploading' && (
+                <div className="ec-transfer-bar">
+                  <div className="ec-transfer-fill" style={{ width: `${t.progress}%` }} />
+                </div>
+              )}
+              {t.status === 'done'  && <span className="ec-transfer-badge done">✓ Sent</span>}
+              {t.status === 'error' && <span className="ec-transfer-badge error">✕ Failed</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -719,15 +840,85 @@ function TransfersPanel() {
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 function SettingsPanel() {
+  const [prefs, setPrefs]                 = useState<AudioPrefs>(loadAudioPrefs);
+  const [inputDevices, setInputDevices]   = useState<MediaDeviceInfo[]>([]);
+  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [saved, setSaved]                 = useState(false);
+
+  useEffect(() => {
+    const enumerate = async () => {
+      try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setInputDevices(all.filter(d => d.kind === 'audioinput'));
+      setOutputDevices(all.filter(d => d.kind === 'audiooutput'));
+    };
+    enumerate();
+    navigator.mediaDevices.addEventListener?.('devicechange', enumerate);
+    return () => navigator.mediaDevices.removeEventListener?.('devicechange', enumerate);
+  }, []);
+
+  const update = <K extends keyof AudioPrefs>(key: K, val: AudioPrefs[K]) => {
+    setPrefs(p => ({ ...p, [key]: val }));
+    setSaved(false);
+  };
+
+  const handleSave = () => {
+    localStorage.setItem('riddimSync_audio_prefs', JSON.stringify(prefs));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <div className="ec-tab-content">
       <div className="ec-content-header">
         <h2 className="ec-content-title">Settings</h2>
       </div>
-      <div className="ec-empty-state">
-        <div className="ec-empty-icon">⚙</div>
-        <h3 className="ec-empty-title">Settings</h3>
-        <p className="ec-empty-sub">Engineer preferences and configuration coming soon.</p>
+
+      <div className="ec-settings-wrap">
+        <section className="ec-settings-section">
+          <h3 className="ec-settings-heading">Audio Devices</h3>
+          <p className="ec-settings-hint" style={{ marginBottom: 8 }}>
+            Applied when starting a call. Changes take effect on the next session.
+          </p>
+
+          <div className="ec-settings-row">
+            <label className="ec-settings-label">Microphone (Input)</label>
+            <select
+              className="ec-settings-select"
+              value={prefs.inputDeviceId}
+              onChange={e => update('inputDeviceId', e.target.value)}
+            >
+              <option value="default">System Default</option>
+              {inputDevices.map(d => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="ec-settings-row">
+            <label className="ec-settings-label">Monitor Output</label>
+            <select
+              className="ec-settings-select"
+              value={prefs.outputDeviceId}
+              onChange={e => update('outputDeviceId', e.target.value)}
+            >
+              <option value="default">System Default</option>
+              {outputDevices.map(d => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Output ${d.deviceId.slice(0, 6)}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        </section>
+
+        <div className="ec-settings-save-row">
+          <button className="ec-btn primary" onClick={handleSave}>
+            {saved ? '✓ Saved' : 'Save Settings'}
+          </button>
+        </div>
       </div>
     </div>
   );

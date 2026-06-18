@@ -7,7 +7,7 @@
   min-height: 200px;
   max-height: 560px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #1a1c2e 0%, #14151f 100%);
+  background: linear-gradient(180deg, #1e1f22 0%, #1a1b1e 100%);
   border-top: 2px solid #0a0a0e;
   overflow: hidden;
   user-select: none;
@@ -23,7 +23,7 @@
   min-height: 22px;
   flex-shrink: 0;
   padding: 0 12px;
-  background: #1e1e28;
+  background: #1c1d20;
   border-bottom: 1px solid #0a0a0e;
 }
 .mixer-header-label {
@@ -61,13 +61,13 @@
   overflow-y: hidden;
   flex: 1;
   scrollbar-width: thin;
-  scrollbar-color: #3a3a44 #14151f;
+  scrollbar-color: #3a3a44 #1a1b1e;
   padding: 6px 5px 8px;
   gap: 3px;
   align-items: stretch;
 }
 .mixer-channels::-webkit-scrollbar       { height: 6px; }
-.mixer-channels::-webkit-scrollbar-track { background: #14151f; }
+.mixer-channels::-webkit-scrollbar-track { background: #1a1b1e; }
 .mixer-channels::-webkit-scrollbar-thumb { background: #3a3a44; border-radius: 3px; }
 .mixer-master-divider { width: 2px; background: #0a0a0e; flex-shrink: 0; }
 
@@ -80,7 +80,7 @@
   min-width: 78px; /* was 94px */
   flex-shrink: 0;
   border-radius: 4px;
-  border: 1px solid #353858;
+  border: 1px solid #2e2f35;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.07),
               inset 0 -1px 0 rgba(0,0,0,0.4),
               2px 0 4px rgba(0,0,0,0.5);
@@ -106,7 +106,7 @@
 }
 .mch-group-select {
   width: 100%;
-  background: #1a1c2c;
+  background: #1e1f22;
   border: 1px solid #444;
   border-radius: 2px;
   color: #888;
@@ -187,8 +187,8 @@
 .mch-pan-lcd {
   display: flex;
   width: 100%;
-  background: #141624;
-  border: 1px solid #2a2c40;
+  background: #1a1b1e;
+  border: 1px solid #2a2b2e;
   border-radius: 2px;
   margin-bottom: 3px;
   overflow: hidden;
@@ -520,8 +520,8 @@
 .master-color-swatch:hover { border-color: rgba(255,255,255,0.7); }
 .master-color-picker {
   width: 160px;
-  background: #1e1e28;
-  border: 1px solid #3a3a4a;
+  background: #1e1f22;
+  border: 1px solid #3a3a44;
   border-radius: 4px;
   padding: 6px;
   z-index: 9999;

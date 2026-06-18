@@ -34,7 +34,12 @@ interface FloatingVideoChatProps {
   muteCallAudio?: boolean;
   /** Stable refs from DawContext — passed as props to avoid context subscription inside this component */
   masterStreamRef: React.MutableRefObject<MediaStreamAudioDestinationNode | null>;
+  nativeStreamRef: React.MutableRefObject<MediaStream | null>;
   audioCtxRef: React.MutableRefObject<AudioContext | null>;
+  /** Override mic device for getUserMedia (defaults to system default) */
+  audioInputDeviceId?: string;
+  /** Override playback sink for incoming call audio (setSinkId) */
+  audioOutputDeviceId?: string;
 }
 
 // ── Ringtone synthesized via Web Audio ───────────────────────────────────────
@@ -112,10 +117,11 @@ interface VideoGridProps {
   setShowLocalCam: (v: boolean) => void;
   userRole: 'artist' | 'engineer';
   muteCallAudio?: boolean;
+  audioOutputDeviceId?: string;
 }
 
 const VideoGrid: React.FC<VideoGridProps> = memo(({
-  callActive, remoteStream, localStream, previewStream, isCalling, showLocalCam, setShowLocalCam, userRole, muteCallAudio,
+  callActive, remoteStream, localStream, previewStream, isCalling, showLocalCam, setShowLocalCam, userRole, muteCallAudio, audioOutputDeviceId,
 }) => {
   const remoteVidRef  = useRef<HTMLVideoElement>(null);
   const localVidRef   = useRef<HTMLVideoElement>(null);
@@ -126,6 +132,13 @@ const VideoGrid: React.FC<VideoGridProps> = memo(({
   useEffect(() => {
     if (remoteVidRef.current)  remoteVidRef.current.srcObject  = remoteStream  ?? null;
   }, [remoteStream]);
+
+  // Route incoming call audio to the selected output device
+  useEffect(() => {
+    const el = remoteVidRef.current as any;
+    if (!el || !audioOutputDeviceId || audioOutputDeviceId === 'default') return;
+    el.setSinkId?.(audioOutputDeviceId).catch(() => {});
+  }, [audioOutputDeviceId, remoteStream]);
 
   // MIX-only monitor mode: mute the incoming call voice without ending the call
   useEffect(() => {
@@ -377,7 +390,8 @@ const DesktopStreamPreview: React.FC<DesktopStreamPreviewProps> = ({ stream, onF
 const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatProps>(({
   userRole, userId, roomCode, onInputEvent, onRcStateChange, onAppRcChange,
   dawControlActive, onDawControlGranted, onDawControlRevoked, muteCallAudio,
-  masterStreamRef, audioCtxRef,
+  masterStreamRef, nativeStreamRef, audioCtxRef,
+  audioInputDeviceId, audioOutputDeviceId,
 }, ref) => {
   const [isMinimized, setIsMinimized] = useState(true);
   const [showChat, setShowChat] = useState(false);
@@ -431,6 +445,7 @@ const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatP
     isInitiator: userRole === 'engineer',
     getDawStream: () => {
       if (userRole === 'artist') {
+        if (nativeStreamRef.current) return nativeStreamRef.current;
         initAudioCtx();
         return masterStreamRef.current?.stream ?? null;
       }
@@ -439,6 +454,7 @@ const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatP
     onInputEvent,
     onDawControlGranted,
     onDawControlRevoked,
+    audioInputDeviceId,
   });
 
   // ── Video refs — always mounted so srcObject is never lost ───────────────
@@ -489,6 +505,12 @@ const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatP
     if (userRole !== 'engineer' || !remoteDawStream) return;
     let ctx = audioCtxRef.current;
     if (!ctx || ctx.state === 'closed') { ctx = new AudioContext(); audioCtxRef.current = ctx; }
+
+    // Route monitoring output to the engineer's selected output device (Chrome 110+ / Electron 22+)
+    if (audioOutputDeviceId && audioOutputDeviceId !== 'default') {
+      (ctx as any).setSinkId?.(audioOutputDeviceId).catch(() => {});
+    }
+
     const resume = ctx.state === 'suspended' ? ctx.resume() : Promise.resolve();
     let gainNode: GainNode, source: MediaStreamAudioSourceNode;
     resume.then(() => {
@@ -862,6 +884,7 @@ const FloatingVideoChat = forwardRef<FloatingVideoChatHandle, FloatingVideoChatP
           setShowLocalCam={setShowLocalCam}
           userRole={userRole}
           muteCallAudio={muteCallAudio}
+          audioOutputDeviceId={audioOutputDeviceId}
         />
 
         {/* Desktop Control — preview panel, only shown when engineer opens it */}

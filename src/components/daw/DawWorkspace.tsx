@@ -44,6 +44,8 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   const [showLyrics, setShowLyrics] = useState(false);
   const [onlineCount, setOnlineCount] = useState(1);
   const [toast, setToast] = useState<{ msg: string; id: number } | null>(null);
+  const [incomingFile, setIncomingFile] = useState<{ name: string; progress: number } | null>(null);
+  const incomingAbortRef = useRef<AbortController | null>(null);
   const dawControlChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const floatingChatRef = useRef<FloatingVideoChatHandle>(null);
   // App RC: engineer controls the artist DAW via forwarded events; results sync back via useDawSync
@@ -94,7 +96,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   const nativeAudio = useNativeAudioEngine();
   // Use native engine when available; fall back to Web Audio API
   const { play, pause, stop, record, seek } = nativeAudio.nativeAvailable ? nativeAudio : webAudio;
-  const { state, dispatch, masterStreamRef, audioCtxRef, currentTimeRef } = useDaw();
+  const { state, dispatch, masterStreamRef, nativeStreamRef, audioCtxRef, currentTimeRef, audioDirPath } = useDaw();
 
   // Extracted so onRecordSync can call it without referencing handleStopRecording
   const stopRecording = useCallback(async () => {
@@ -111,11 +113,13 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
 
   // ── Live stream (ListenTo-style) ────────────────────────────
   const getMasterStream = useCallback(() => {
-    // Initialise AudioContext on first call (must be inside a user-gesture callsite)
+    // Prefer the WebCodecs generator stream (no AudioContext needed).
+    if (nativeStreamRef.current) return nativeStreamRef.current;
+    // Fall back to Web Audio destination stream.
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') return null;
     if (!masterStreamRef.current) return null;
     return masterStreamRef.current.stream;
-  }, [audioCtxRef, masterStreamRef]);
+  }, [nativeStreamRef, audioCtxRef, masterStreamRef]);
 
   const {
     isStreaming, isReceiving, remoteStream: liveRemoteStream,
@@ -499,8 +503,79 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
     dawControlChannelRef.current = ch;
 
     ch.on('broadcast', { event: 'daw-control-revoked' }, () => {
-      // Engineer exited DAW voluntarily — clear the status bar
       setDawControlActive(false);
+    });
+
+    ch.on('broadcast', { event: 'file-to-artist' }, async ({ payload }) => {
+      const { url, filename, size: _size } = payload as { url: string; filename: string; size: number };
+
+      const controller = new AbortController();
+      incomingAbortRef.current = controller;
+      setIncomingFile({ name: filename, progress: 0 });
+
+      try {
+        // Stage 1: fetch (10%)
+        setIncomingFile({ name: filename, progress: 10 });
+        const resp = await fetch(url, { signal: controller.signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        // Stage 2: buffer download (10 → 65%) — arrayBuffer is reliable in Electron
+        setIncomingFile({ name: filename, progress: 25 });
+        const arrayBuf = await resp.arrayBuffer();
+        const buffer = new Uint8Array(arrayBuf);
+
+        // Stage 3: write to disk (65%)
+        setIncomingFile({ name: filename, progress: 65 });
+        let audioUrl: string;
+        const savedToDisk = !!(audioDirPath && window.studioRC?.writeFile);
+        if (savedToDisk) {
+          const sep      = audioDirPath!.includes('\\') ? '\\' : '/';
+          const filePath = audioDirPath + sep + filename;
+          await window.studioRC!.writeFile(filePath, arrayBuf);
+        }
+        audioUrl = URL.createObjectURL(new Blob([buffer]));
+
+        // Stage 4: decode audio (80%)
+        setIncomingFile({ name: filename, progress: 80 });
+        let duration = 0;
+        let peaks: number[] = [];
+        try {
+          const ctx = new AudioContext();
+          const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
+          duration = decoded.duration;
+          const { generatePeaksStereo: gp } = await import('../../utils/audioUtils');
+          const peakResult = await gp(decoded, 200);
+          peaks = peakResult.left;
+          ctx.close();
+        } catch { /* keep defaults */ }
+
+        const poolItem: PoolItem = {
+          id:            `recv_${Date.now()}`,
+          name:          filename.replace(/\.[^.]+$/, ''),
+          audioUrl,
+          duration,
+          createdAt:     new Date(),
+          waveformPeaks: peaks,
+          uploadStatus:  'done',
+          localFileName: filename,
+        };
+        dispatch({ type: 'ADD_POOL_ITEM', payload: poolItem });
+
+        setIncomingFile(null);
+        incomingAbortRef.current = null;
+        setToast({
+          msg: savedToDisk
+            ? `Received: ${filename}`
+            : `${filename} added to pool — save your project to keep it on disk`,
+          id: Date.now(),
+        });
+      } catch (err) {
+        incomingAbortRef.current = null;
+        setIncomingFile(null);
+        if (err instanceof Error && err.name === 'AbortError') return;
+        console.error('[file-to-artist]', err);
+        setToast({ msg: `Failed to receive ${filename}`, id: Date.now() });
+      }
     });
 
     ch.subscribe();
@@ -509,7 +584,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
       supabase.removeChannel(ch);
       dawControlChannelRef.current = null;
     };
-  }, [userRole, roomCode]);
+  }, [userRole, roomCode, audioDirPath, dispatch]);
 
   // Called (on both sides) when the unified consent modal grants DAW control
   const handleDawControlGranted = useCallback(() => {
@@ -745,6 +820,25 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
         </div>
       )}
 
+      {incomingFile && (
+        <div className="daw-incoming-file">
+          <span className="daw-incoming-label">⬇ {incomingFile.name}</span>
+          <div className="daw-incoming-bar">
+            <div className="daw-incoming-fill" style={{ width: `${incomingFile.progress || 5}%` }} />
+          </div>
+          <span className="daw-incoming-pct">{incomingFile.progress}%</span>
+          <button
+            className="daw-incoming-cancel"
+            title="Cancel download"
+            onClick={() => {
+              incomingAbortRef.current?.abort();
+              incomingAbortRef.current = null;
+              setIncomingFile(null);
+            }}
+          >✕</button>
+        </div>
+      )}
+
       {toast && (
         <div key={toast.id} className="daw-toast-notification">
           {toast.msg}
@@ -790,7 +884,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
           )}
         </div>
 
-        {state.panelVisibility.mediaPool && <MediaPoolPanel onClose={() => dispatch({ type: 'SET_PANEL_VISIBILITY', payload: { mediaPool: false } })} />}
+        {state.panelVisibility.mediaPool && <MediaPoolPanel roomCode={roomCode} onClose={() => dispatch({ type: 'SET_PANEL_VISIBILITY', payload: { mediaPool: false } })} onToast={(msg) => setToast({ msg, id: Date.now() })} />}
       </div>
 
       <TransportPanel
@@ -812,6 +906,7 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
         userId={userId}
         roomCode={roomCode}
         masterStreamRef={masterStreamRef}
+        nativeStreamRef={nativeStreamRef}
         audioCtxRef={audioCtxRef}
         onInputEvent={handleInputEvent}
         onRcStateChange={handleRcStateChange}

@@ -180,6 +180,12 @@ export class NativeAudioEngine extends EventEmitter {
   private engineSr      = ENGINE_SR;
   private tracks:       TrackRuntime[] = [];
   private fillTimer:    NodeJS.Timeout | null = null;
+  // Wall-clock anchor used to gate writes and prevent PortAudio ring-buffer overflow.
+  // We track how many samples have been CONSUMED by the device (wall-clock * sr) and
+  // refuse to write more than MAX_WRITE_AHEAD_MS milliseconds ahead of consumption.
+  private _writeStartWall   = 0;   // Date.now() when the current play session started
+  private _writeStartSample = 0;   // playPosition at that moment
+  private static readonly MAX_WRITE_AHEAD_MS = 250; // keep ring buffer ≤ 250 ms
 
   // ── Live track parameters (updated without stopping playback)
   private liveParams = new Map<string, { volume: number; pan: number; muted: boolean }>();
@@ -258,6 +264,10 @@ export class NativeAudioEngine extends EventEmitter {
 
     this.tracks  = runtimes;
     this.playing = true;
+
+    // Anchor wall-clock so _fill() can rate-limit writes
+    this._writeStartWall   = Date.now();
+    this._writeStartSample = this.playPosition;
 
     // Reuse an existing outStream opened by monitoring rather than creating a
     // second one — ASIO uses exclusive device access and rejects a second open.
@@ -350,21 +360,9 @@ export class NativeAudioEngine extends EventEmitter {
       rmsR += r * r;
     }
 
-    try {
-      this.outStream.write(Buffer.from(out.buffer));
-    } catch { /* stream closed */ }
-
-    // Emit interleaved F32 mix to playback-mix / master-output buses
-    if (this._playBusSubs > 0) {
-      this.emit('busChunk', 'playback-mix', Buffer.from(out.buffer));
-    }
-
+    // Advance position clock BEFORE writing so it never stalls if write() blocks.
     this.playPosition += n;
-
-    // Position event (throttled by the caller dispatch)
     this.emit('position', this.playPosition / sr);
-
-    // Level meters
     this.emit('levels', [Math.sqrt(rmsL / n), Math.sqrt(rmsR / n)]);
 
     // Auto-stop when all clips have finished
@@ -373,7 +371,26 @@ export class NativeAudioEngine extends EventEmitter {
       if (this.playPosition >= maxEnd) {
         this.stopPlayback();
         this.emit('ended', this.playPosition / sr);
+        return;
       }
+    }
+
+    // Write to device only if we haven't written more than MAX_WRITE_AHEAD_MS ahead
+    // of what the device has consumed. This prevents the PortAudio ring buffer from
+    // overflowing and blocking write(), which would freeze the position clock.
+    const wallMs        = Date.now() - this._writeStartWall;
+    const consumedSamples  = (wallMs / 1000) * sr;
+    const writtenSamples   = this.playPosition - this._writeStartSample;
+    const maxAheadSamples  = (NativeAudioEngine.MAX_WRITE_AHEAD_MS / 1000) * sr;
+    if (writtenSamples <= consumedSamples + maxAheadSamples) {
+      try {
+        this.outStream.write(Buffer.from(out.buffer));
+      } catch { /* stream closed */ }
+    }
+
+    // Emit interleaved F32 mix to playback-mix / master-output buses
+    if (this._playBusSubs > 0) {
+      this.emit('busChunk', 'playback-mix', Buffer.from(out.buffer));
     }
   }
 
@@ -394,7 +411,9 @@ export class NativeAudioEngine extends EventEmitter {
   }
 
   seek(timeSecs: number) {
-    this.playPosition = Math.max(0, Math.round(timeSecs * this.engineSr));
+    this.playPosition      = Math.max(0, Math.round(timeSecs * this.engineSr));
+    this._writeStartWall   = Date.now();
+    this._writeStartSample = this.playPosition;
   }
 
   setTrackParams(trackId: string, params: Partial<{ volume: number; pan: number; muted: boolean }>) {

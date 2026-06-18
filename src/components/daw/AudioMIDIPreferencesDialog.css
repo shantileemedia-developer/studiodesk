@@ -263,6 +263,21 @@
 }
 .apd-btn-primary:hover { background: #3568e8; }
 
+
+.apd-asio-note {
+  font-size: 10px;
+  color: #666;
+  line-height: 1.5;
+}
+
+.apd-asio-panel-btn {
+  height: 26px;
+  width: 32px;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
 /* ── MIDI tabs ── */
 .apd-midi {
   display: flex;

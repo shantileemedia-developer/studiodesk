@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   FileAudio, FolderOpen, Play, Pause, Search,
-  Download, Trash2, Mic, Upload, Loader, Archive, CheckCircle, XCircle,
+  Download, Trash2, Mic, Upload, Loader, Archive, CheckCircle, XCircle, Send,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -9,6 +9,7 @@ import { useDaw } from '../../context/DawContext';
 import type { PoolItem } from '../../context/DawContext';
 import WaveformDisplay from './WaveformDisplay';
 import { exportAudioBlob } from '../../utils/audioExporter';
+import { supabase } from '../../lib/supabaseClient';
 import './MediaPoolPanel.css';
 
 
@@ -31,7 +32,7 @@ const formatDate = (date: Date | string): string => {
   return d.toLocaleDateString();
 };
 
-const MediaPoolPanel = ({ onClose }: { onClose?: () => void }) => {
+const MediaPoolPanel = ({ onClose, roomCode, onToast }: { onClose?: () => void; roomCode?: string; onToast?: (msg: string) => void }) => {
   const { state, dispatch, audioDirHandle, retryUploadRef, userRole } = useDaw();
   const { poolItems, regions } = state;
 
@@ -42,6 +43,7 @@ const MediaPoolPanel = ({ onClose }: { onClose?: () => void }) => {
   const [exporting,      setExporting]      = useState(false);
   const [exportLabel,    setExportLabel]    = useState('');
   const [workUploadOver, setWorkUploadOver] = useState(false);
+  const [sendProgress,   setSendProgress]   = useState<{ name: string; pct: number } | null>(null);
   const [lassoStart,     setLassoStart]     = useState<{ x: number, y: number } | null>(null);
   const [lassoCurrent,   setLassoCurrent]   = useState<{ x: number, y: number } | null>(null);
   const [ctxMenu,        setCtxMenu]        = useState<{ id: string; x: number; y: number } | null>(null);
@@ -276,6 +278,53 @@ const MediaPoolPanel = ({ onClose }: { onClose?: () => void }) => {
       console.error('Download failed:', err);
     }
   };
+
+  // ── Send to Artist (engineer only) ───────────────────────────────
+  const handleSendToArtist = useCallback(async (file: File) => {
+    if (!roomCode) return;
+    const id   = `xfer_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const path = `transfers/${roomCode}/${id}_${file.name}`;
+    setSendProgress({ name: file.name, pct: 0 });
+    try {
+      const { error } = await supabase.storage.from('audio').upload(path, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+      if (error) throw error;
+
+      setSendProgress({ name: file.name, pct: 80 });
+      const { data: urlData } = supabase.storage.from('audio').getPublicUrl(path);
+
+      // Wait for the channel to actually be SUBSCRIBED before sending
+      const ch = supabase.channel(`ec-session-${roomCode}`, { config: { broadcast: { ack: false } } });
+      await new Promise<void>((resolve, reject) => {
+        ch.subscribe((status) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') reject(new Error(`Channel ${status}`));
+        });
+      });
+      await ch.send({ type: 'broadcast', event: 'file-to-artist', payload: { url: urlData.publicUrl, filename: file.name, size: file.size } });
+      // Give Supabase time to deliver before closing the connection
+      await new Promise(r => setTimeout(r, 800));
+      supabase.removeChannel(ch);
+
+      setSendProgress(null);
+      onToast?.(`Sent "${file.name}" to artist`);
+    } catch (err) {
+      console.error('[Send to Artist from pool]', err);
+      setSendProgress(null);
+      onToast?.(`Failed to send "${file.name}" — check console for details`);
+    }
+  }, [roomCode, onToast]);
+
+  const openSendToArtistPicker = useCallback(() => {
+    const input = document.createElement('input');
+    input.type     = 'file';
+    input.accept   = 'audio/*,.wav,.mp3,.flac,.aiff,.ogg,.m4a';
+    input.multiple = true;
+    input.onchange = () => Array.from(input.files ?? []).forEach(handleSendToArtist);
+    input.click();
+  }, [handleSendToArtist]);
 
   // ── Pool item drag ────────────────────────────────────────────────
   const handleItemDragStart = (e: React.DragEvent, id: string) => {
@@ -531,7 +580,26 @@ const MediaPoolPanel = ({ onClose }: { onClose?: () => void }) => {
         );
       })()}
 
-      {/* Send to Engineer button — drag-drop target for ZIP pool items */}
+      {/* Send to Artist — file picker that uploads and delivers to artist's pool (engineer only) */}
+      {userRole === 'engineer' && roomCode && (
+        <button
+          className={`workupload-btn${sendProgress ? ' workupload-drag-over' : ''}`}
+          onClick={sendProgress ? undefined : openSendToArtistPicker}
+          disabled={!!sendProgress}
+          title="Send an audio file to the artist's project folder and Media Pool"
+        >
+          {sendProgress
+            ? <Loader size={13} className="spin" />
+            : <Send size={13} />}
+          <span>
+            {sendProgress
+              ? `Sending ${sendProgress.name}… ${sendProgress.pct}%`
+              : 'Send to Artist'}
+          </span>
+        </button>
+      )}
+
+      {/* Send to Engineer — drag-drop target for ZIP pool items (always visible) */}
       <button
         className={`workupload-btn ${workUploadOver ? 'workupload-drag-over' : ''}`}
         onDragOver={handleWorkUploadDragOver}

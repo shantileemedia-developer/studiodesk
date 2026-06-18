@@ -118,11 +118,13 @@ export const useNativeAudioEngine = () => {
   useEffect(() => { timeSigRef.current   = state.transport.timeSignature; }, [state.transport.timeSignature]);
 
   // Project end time — recalculate whenever regions change
-  const projectEndRef = useRef(0);
+  const projectEndRef = useRef(Infinity);
   useEffect(() => {
-    projectEndRef.current = state.regions.reduce(
-      (max, r) => Math.max(max, r.startTime + r.duration), 0,
-    ) + 2; // 2 s tail
+    // With no regions there is no "end" — play indefinitely until stopped.
+    // With regions, stop 2 s after the last clip finishes.
+    projectEndRef.current = state.regions.length === 0
+      ? Infinity
+      : state.regions.reduce((max, r) => Math.max(max, r.startTime + r.duration), 0) + 2;
   }, [state.regions]);
 
   // Punch state

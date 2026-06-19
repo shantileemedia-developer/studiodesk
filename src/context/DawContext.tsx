@@ -417,13 +417,18 @@ function coreReducer(state: DawState, action: DawAction): DawState {
           t.id === action.payload.id ? { ...t, ...action.payload.updates } : t
         ),
       };
-    case 'RENAME_TRACK':
+    case 'RENAME_TRACK': {
+      const { id, name } = action.payload;
+      const affectedPoolIds = new Set(
+        state.regions.filter(r => r.trackId === id && r.poolItemId).map(r => r.poolItemId!)
+      );
       return {
         ...state,
-        tracks: state.tracks.map(t =>
-          t.id === action.payload.id ? { ...t, name: action.payload.name } : t
-        ),
+        tracks:    state.tracks.map(t => t.id === id ? { ...t, name } : t),
+        regions:   state.regions.map(r => r.trackId === id ? { ...r, name } : r),
+        poolItems: state.poolItems.map(p => affectedPoolIds.has(p.id) ? { ...p, name } : p),
       };
+    }
     case 'REMOVE_TRACK':
       return {
         ...state,

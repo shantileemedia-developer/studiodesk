@@ -775,7 +775,7 @@ export const useNativeAudioEngine = () => {
       await eng()!.startMonitoring(inId, outId);
     }
 
-    await eng()!.startRecording(filePath, inId, outId, 48000, 2);
+    await eng()!.startRecording(filePath, inId, outId, 48000, 2, currentTimeRef.current);
 
     // Always call play so the position clock runs and the live waveform draws,
     // even on an empty timeline (specs can be [] for a first-take recording).

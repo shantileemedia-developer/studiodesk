@@ -205,10 +205,12 @@ export class NativeAudioEngine extends EventEmitter {
   private liveParams = new Map<string, { volume: number; pan: number; muted: boolean }>();
 
   // ── Recording state
-  private recFilePath   = '';
-  private recPcmBytes   = 0;
-  private recSr         = ENGINE_SR;
-  private recNumCh      = NUM_CHANNELS;
+  private recFilePath      = '';
+  private recPcmBytes      = 0;
+  private recFramesWritten = 0;  // input frames captured — drives position clock
+  private recStartDawPos   = 0;  // DAW timeline position when recording began
+  private recSr            = ENGINE_SR;
+  private recNumCh         = NUM_CHANNELS;
 
   // ── Audit logging ─────────────────────────────────────────────────────────
   private _auditFillCount = 0;  // counts _fill() calls; log every ~500 ms
@@ -352,9 +354,15 @@ export class NativeAudioEngine extends EventEmitter {
         this.emit('position', startTimeSecs);  // immediate cursor snap before first callback
         return;
       } catch (err) {
-        console.error('[AudioEngine] pa_callback.play() failed, falling back to push-mode:', err);
+        console.error('[AudioEngine] pa_callback.play() failed:', err);
         this._usingCbAddon = false;
         this._cbTrackIds   = [];
+        if (this.recording) {
+          // ASIO exclusive: input is open for recording; output can't open simultaneously.
+          // Position is driven by the recording data handler — no fill timer needed.
+          this.emit('position', startTimeSecs);
+          return;
+        }
       }
     }
 
@@ -400,6 +408,14 @@ export class NativeAudioEngine extends EventEmitter {
         this.outStream.start();
       } catch (err) {
         this.playing = false;
+        if (this.recording) {
+          // ASIO exclusive: output can't open while input is recording.
+          // Recover: stay "playing" so position events from the recording stream pass through.
+          console.warn('[AudioEngine] Output open failed during recording (ASIO exclusive):', (err as Error).message);
+          this.playing = true;
+          this.emit('position', startTimeSecs);
+          return;
+        }
         this.emit('error', `Output open failed: ${(err as Error).message}`);
         return;
       }
@@ -615,7 +631,9 @@ export class NativeAudioEngine extends EventEmitter {
     }
     if (Object.keys(zeroTracks).length > 0) this.emit('trackLevels', zeroTracks);
     this.emit('levels', [0, 0]);
-    this.emit('inputLevels', [0, 0]);
+    // Don't zero input meters here if recording is still active — the data handler
+    // keeps emitting live levels. stopRecording() will zero them when the stream closes.
+    if (!this.recording) this.emit('inputLevels', [0, 0]);
 
     this.playing = false;
     this._cbTrackIds = [];
@@ -694,10 +712,11 @@ export class NativeAudioEngine extends EventEmitter {
 
   async startRecording(
     filePath: string,
-    inDeviceId  = -1,
-    outDeviceId = -1,
-    sr          = ENGINE_SR,
-    numCh       = NUM_CHANNELS,
+    inDeviceId       = -1,
+    outDeviceId      = -1,
+    sr               = ENGINE_SR,
+    numCh            = NUM_CHANNELS,
+    startDawPosition = 0,
   ) {
     if (!naudiodon) { this.emit('unavailable'); return; }
     await this.stopRecording();
@@ -710,12 +729,14 @@ export class NativeAudioEngine extends EventEmitter {
       this.inStream = null;
     }
 
-    this.recFilePath = filePath;
-    this.recPcmBytes = 0;
-    this.recSr       = sr;
-    this.recNumCh    = numCh;
-    this.inDeviceId  = inDeviceId;
-    this.recording   = true;
+    this.recFilePath      = filePath;
+    this.recPcmBytes      = 0;
+    this.recFramesWritten = 0;
+    this.recStartDawPos   = startDawPosition;
+    this.recSr            = sr;
+    this.recNumCh         = numCh;
+    this.inDeviceId       = inDeviceId;
+    this.recording        = true;
 
     // Ensure directory exists
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
@@ -756,9 +777,12 @@ export class NativeAudioEngine extends EventEmitter {
           }
         }
 
-        this.recPcmBytes += pcm24.byteLength;
+        this.recPcmBytes      += pcm24.byteLength;
+        this.recFramesWritten += frames;
         this.recWs.write(pcm24);
         this.emit('inputLevels', [Math.sqrt(rmsL / frames), Math.sqrt(rmsR / frames)]);
+        // Position driven by input sample clock — exact, no wall-clock drift
+        this.emit('position', this.recStartDawPos + this.recFramesWritten / sr);
         // Emit raw F32 chunk to the mic-input bus (any subscriber gets it here
         // without opening a second exclusive input stream)
         if (this._micBusSubs > 0) this.emit('busChunk', 'mic-input', chunk);
@@ -819,8 +843,10 @@ export class NativeAudioEngine extends EventEmitter {
 
     const duration = dataBytes / (this.recSr * this.recNumCh * 3);
     const result   = { filePath: this.recFilePath, duration };
-    this.recFilePath  = '';
-    this.recPcmBytes  = 0;
+    this.recFilePath      = '';
+    this.recPcmBytes      = 0;
+    this.recFramesWritten = 0;
+    this.emit('inputLevels', [0, 0]);
 
     // If mic-input bus still has subscribers and no monitoring stream is open,
     // reopen a dedicated bus stream so the bus stays live after recording stops.

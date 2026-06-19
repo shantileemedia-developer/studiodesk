@@ -439,8 +439,8 @@ ipcMain.handle('audio:setTrackParams', (_e, trackId: string, params: any) =>
 
 ipcMain.handle('audio:getTakePath', (_e, name: string) => NativeAudioEngine.getTakePath(name));
 
-ipcMain.handle('audio:startRecording', async (_e, filePath, inId, outId, sr, numCh) => {
-  await engine.startRecording(filePath, inId ?? -1, outId ?? -1, sr ?? 48000, numCh ?? 2);
+ipcMain.handle('audio:startRecording', async (_e, filePath, inId, outId, sr, numCh, startDawPos) => {
+  await engine.startRecording(filePath, inId ?? -1, outId ?? -1, sr ?? 48000, numCh ?? 2, startDawPos ?? 0);
 });
 ipcMain.handle('audio:stopRecording', () => engine.stopRecording());
 

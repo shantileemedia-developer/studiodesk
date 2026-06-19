@@ -41,7 +41,7 @@ export interface AudioEngineAPI {
   setTrackParams(trackId: string, params: { volume?: number; pan?: number; muted?: boolean }): Promise<void>;
 
   getTakePath(name: string): Promise<string>;
-  startRecording(filePath: string, inId?: number, outId?: number, sr?: number, numCh?: number): Promise<void>;
+  startRecording(filePath: string, inId?: number, outId?: number, sr?: number, numCh?: number, startDawPos?: number): Promise<void>;
   stopRecording(): Promise<{ filePath: string; duration: number } | null>;
 
   startMonitoring(inId?: number, outId?: number, sr?: number, numCh?: number): Promise<void>;

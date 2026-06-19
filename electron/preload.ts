@@ -40,8 +40,8 @@ contextBridge.exposeInMainWorld('audioEngine', {
 
   // Recording
   getTakePath: (name: string): Promise<string> => ipcRenderer.invoke('audio:getTakePath', name),
-  startRecording: (filePath: string, inId?: number, outId?: number, sr?: number, numCh?: number): Promise<void> =>
-    ipcRenderer.invoke('audio:startRecording', filePath, inId, outId, sr, numCh),
+  startRecording: (filePath: string, inId?: number, outId?: number, sr?: number, numCh?: number, startDawPos?: number): Promise<void> =>
+    ipcRenderer.invoke('audio:startRecording', filePath, inId, outId, sr, numCh, startDawPos),
   stopRecording: (): Promise<{ filePath: string; duration: number } | null> =>
     ipcRenderer.invoke('audio:stopRecording'),
 

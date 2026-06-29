@@ -446,8 +446,9 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
           artistLeftTimer = null;
         }
         setToast({ msg: `${joinedRole.charAt(0).toUpperCase() + joinedRole.slice(1)} joined the session!`, id: Date.now() });
-        // Push live in-memory state to the rejoining peer so they sync instantly
-        broadcastState();
+        // Only the artist pushes state — engineer starts with initialState and must never
+        // overwrite the artist's project with its own empty snapshot.
+        if (userRole === 'artist') broadcastState();
       }
     });
 

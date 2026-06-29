@@ -336,9 +336,11 @@ export const useDawSync = (
     };
   }, [roomCode, originalDispatch, setDispatchMiddleware]);
 
-  // ── Debounced DB Save (saves full transport block now) ──────────
+  // ── Debounced DB Save — artist only ──────────────────────────────
+  // The engineer mounts DawProvider with empty initialState; if they also wrote
+  // to the DB they would clobber the artist's project before the live sync arrives.
   useEffect(() => {
-    if (!roomCode) return;
+    if (!roomCode || userRole !== 'artist') return;
 
     const timer = setTimeout(() => {
       const stateToSave = {

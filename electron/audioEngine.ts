@@ -259,6 +259,7 @@ export class NativeAudioEngine extends EventEmitter {
   private _pendingRecOutDevId   = -1;
   private _pendingRecSr         = ENGINE_SR;
   private _pendingRecStartDawPos = 0;
+  private _pendingRecChOffset   = 0;  // 0-indexed input channel to record from
 
   // ── ASIO callback diagnostics ──────────────────────────────────────────────
   // Counters reset on each startPlayback(); per-second window resets each log.
@@ -384,9 +385,9 @@ export class NativeAudioEngine extends EventEmitter {
             startSample,
             this._pendingRecPath,
             trackData,
-            (pos: number)     => { this.emit('position', pos); },
+            (pos: number)      => { this.emit('position', pos); },
             (levels: number[]) => { this.emit('levels', levels); },
-            (flat: number[])  => {
+            (flat: number[])   => {
               const map: Record<string, [number, number]> = {};
               for (let i = 0; i < this._cbTrackIds.length; i++) {
                 map[this._cbTrackIds[i]] = [flat[i * 2] ?? 0, flat[i * 2 + 1] ?? 0];
@@ -395,8 +396,9 @@ export class NativeAudioEngine extends EventEmitter {
             },
             (levels: number[]) => { this.emit('inputLevels', levels); },
             (_endPos: number)  => {
-              // Recording sessions don't auto-end — ignoring; stopRecord() controls teardown.
+              // Recording sessions don't auto-end — stopRecord() controls teardown.
             },
+            this._pendingRecChOffset,  // 12th arg: 0-indexed input channel
           );
           this._usingCbAddon = true;
           this._startDiagTimer();
@@ -814,6 +816,7 @@ export class NativeAudioEngine extends EventEmitter {
     sr               = ENGINE_SR,
     numCh            = NUM_CHANNELS,
     startDawPosition = 0,
+    inputChOffset    = 0,   // 0-indexed input channel to record from
   ) {
     if (!naudiodon) { this.emit('unavailable'); return; }
     await this.stopRecording();
@@ -845,6 +848,7 @@ export class NativeAudioEngine extends EventEmitter {
       this._pendingRecord         = true;
       this._pendingRecPath        = filePath;
       this._pendingRecInDevId     = inDeviceId;
+      this._pendingRecChOffset    = inputChOffset;
       this._pendingRecOutDevId    = outDeviceId;
       this._pendingRecSr          = sr;
       this._pendingRecStartDawPos = startDawPosition;

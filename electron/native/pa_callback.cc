@@ -151,6 +151,8 @@ static struct Engine {
     std::atomic<int>  isRecording{0};
     int               recSr  = 48000;
     int               recCh  = 2;
+    int               recInputNumCh    = 2;  // channels opened on the input stream
+    int               recInputChOffset = 0;  // 0-indexed channel to capture (mono)
     char              recFilePath[1024] = {};
     FILE             *recFile = nullptr;
     uint64_t          recBytesWritten = 0;
@@ -369,15 +371,24 @@ static int paCallback(
     e.position.store(newPos, std::memory_order_relaxed);
 
     // Recording input: push to ring buffer and compute input RMS.
+    // De-interleave the selected mono channel into a stereo WAV stream.
     float inRmsL = 0.f, inRmsR = 0.f;
     const bool rec = e.isRecording.load(std::memory_order_relaxed) != 0;
     if (rec && in_) {
-        const float *inp = static_cast<const float *>(in_);
-        for (int i = 0; i < n; i++) {
-            inRmsL += inp[i*2]   * inp[i*2];
-            inRmsR += inp[i*2+1] * inp[i*2+1];
+        const float *inp   = static_cast<const float *>(in_);
+        const int    inCh  = e.recInputNumCh;
+        const int    chOff = e.recInputChOffset;
+        // Use a stack buffer: max 4096 frames × 2 (stereo WAV output)
+        float monoBuf[4096 * 2];
+        const int nCap = n < 4096 ? n : 4096;
+        for (int i = 0; i < nCap; i++) {
+            float s = inp[i * inCh + chOff];
+            monoBuf[i*2]   = s;
+            monoBuf[i*2+1] = s;
+            inRmsL += s * s;
+            inRmsR += s * s;
         }
-        e.ring.push(inp, n * 2);
+        e.ring.push(monoBuf, nCap * 2);
     }
 
     // Auto-end (playback-only sessions; recording runs until stopRecord).
@@ -612,7 +623,12 @@ Napi::Value Play(const Napi::CallbackInfo &info) {
 }
 
 // record(inDev, outDev, sampleRate, startSample, filePath, tracks[],
-//        onPos, onLevels, onTrLev, onInputLevels, onEnded)
+//        onPos, onLevels, onTrLev, onInputLevels, onEnded [, channelOffset=0])
+//
+// channelOffset (optional 12th arg): 0-indexed input channel to record from.
+// The input stream is opened with max(channelOffset+1, 2) channels so the
+// selected channel is always in range. Mono capture is written as stereo WAV
+// (same sample on L and R) so the rest of the pipeline is unchanged.
 //
 // For ASIO: inDev and outDev must be the same physical device (ASIO is exclusive,
 // single-stream). Pa_OpenStream opens a single full-duplex stream over that device.
@@ -630,11 +646,19 @@ Napi::Value Record(const Napi::CallbackInfo &info) {
     int64_t startSample = static_cast<int64_t>(info[3].As<Napi::Number>().DoubleValue());
     std::string filePath = info[4].As<Napi::String>().Utf8Value();
 
+    // Optional 12th arg: 0-indexed input channel to capture (default = 0).
+    int chOffset = 0;
+    if (info.Length() >= 12 && info[11].IsNumber())
+        chOffset = info[11].As<Napi::Number>().Int32Value();
+    if (chOffset < 0) chOffset = 0;
+
     gEng.teardown();
-    gEng.sampleRate     = sampleRate;
-    gEng.recSr          = sampleRate;
-    gEng.recCh          = 2;
-    gEng.recBytesWritten = 0;
+    gEng.sampleRate          = sampleRate;
+    gEng.recSr               = sampleRate;
+    gEng.recCh               = 2;
+    gEng.recInputChOffset    = chOffset;
+    gEng.recInputNumCh       = (chOffset + 1 > 2) ? chOffset + 1 : 2;
+    gEng.recBytesWritten     = 0;
     strncpy(gEng.recFilePath, filePath.c_str(), sizeof(gEng.recFilePath) - 1);
     gEng.recFilePath[sizeof(gEng.recFilePath) - 1] = '\0';
 
@@ -676,7 +700,7 @@ Napi::Value Record(const Napi::CallbackInfo &info) {
     // Build stream params.
     PaStreamParameters inP{};
     inP.device         = (inDevId >= 0) ? inDevId : Pa_GetDefaultInputDevice();
-    inP.channelCount   = 2;
+    inP.channelCount   = gEng.recInputNumCh;   // enough channels to reach the chosen offset
     inP.sampleFormat   = paFloat32;
     inP.suggestedLatency = Pa_GetDeviceInfo(inP.device)
         ? Pa_GetDeviceInfo(inP.device)->defaultLowInputLatency : 0.02;

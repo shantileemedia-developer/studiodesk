@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Settings2, Target, SlidersHorizontal, ChevronDown, Power } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
+import { loadAudioPrefs } from './AudioMIDIPreferencesDialog';
+import type { AudioDevice } from '../../types/audioEngine';
 import './InspectorPanel.css';
 
 const gainToDb = (g: number) => g <= 0 ? '-∞' : `${(20 * Math.log10(g)).toFixed(1)} dB`;
@@ -13,18 +15,23 @@ const InspectorPanel = ({ onClose }: { onClose?: () => void }) => {
   const [routingOpen, setRoutingOpen] = useState(true);
   const [insertsOpen, setInsertsOpen] = useState(true);
   const [sendsOpen, setSendsOpen]     = useState(false);
-  const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [nativeDevices, setNativeDevices] = useState<AudioDevice[]>([]);
 
-  // Enumerate audio inputs — re-run when devices change (e.g. USB mic plugged in)
+  // Load native devices once so we know how many channels the interface has.
   useEffect(() => {
-    const enumerate = () =>
-      navigator.mediaDevices.enumerateDevices()
-        .then(devices => setInputDevices(devices.filter(d => d.kind === 'audioinput')))
+    if (window.audioEngine) {
+      window.audioEngine.getDevices()
+        .then(devs => setNativeDevices(devs))
         .catch(() => {});
-    enumerate();
-    navigator.mediaDevices.addEventListener('devicechange', enumerate);
-    return () => navigator.mediaDevices.removeEventListener('devicechange', enumerate);
+    }
   }, []);
+
+  // Derive channel count from the saved audio prefs + native device list.
+  const prefs = loadAudioPrefs();
+  const activeInDevId = prefs.nativeInputDeviceId;
+  const activeDevice  = nativeDevices.find(d => d.id === activeInDevId);
+  // Fallback: 16 channels so the picker is always useful even before device list loads.
+  const maxInputCh = activeDevice ? activeDevice.maxInputChannels : (nativeDevices.length > 0 ? 2 : 16);
 
   const panToLabel = (p: number) => {
     if (Math.abs(p) < 0.02) return 'C';
@@ -120,26 +127,44 @@ const InspectorPanel = ({ onClose }: { onClose?: () => void }) => {
           </div>
           {routingOpen && (
             <div className="section-body routing-body">
-              {/* Input device */}
+              {/* Input channel — individual channel on the audio interface */}
               <div className="routing-row">
                 <span className="routing-label">IN</span>
-                <select
-                  className="routing-select"
-                  value={track.inputDeviceId ?? 'default'}
-                  onChange={e => dispatch({
-                    type: 'UPDATE_TRACK',
-                    payload: { id: track.id, updates: { inputDeviceId: e.target.value } },
-                  })}
-                  title="Audio input device for this track"
-                >
-                  <option value="default">Default Input</option>
-                  {inputDevices.map(d => (
-                    <option key={d.deviceId} value={d.deviceId}>
-                      {d.label || `Input ${d.deviceId.slice(0, 6)}…`}
-                    </option>
-                  ))}
-                </select>
+                {track.type === 'stereo' ? (
+                  <select
+                    className="routing-select"
+                    value={track.inputChannel ?? 1}
+                    onChange={e => dispatch({
+                      type: 'UPDATE_TRACK',
+                      payload: { id: track.id, updates: { inputChannel: Number(e.target.value) } },
+                    })}
+                    title="Stereo input pair from audio interface"
+                  >
+                    {Array.from({ length: Math.floor(maxInputCh / 2) || 1 }, (_, i) => (
+                      <option key={i} value={i * 2 + 1}>Ch {i * 2 + 1}–{i * 2 + 2}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    className="routing-select"
+                    value={track.inputChannel ?? 1}
+                    onChange={e => dispatch({
+                      type: 'UPDATE_TRACK',
+                      payload: { id: track.id, updates: { inputChannel: Number(e.target.value) } },
+                    })}
+                    title="Mono input channel from audio interface"
+                  >
+                    {Array.from({ length: maxInputCh || 1 }, (_, i) => (
+                      <option key={i} value={i + 1}>Ch {i + 1}</option>
+                    ))}
+                  </select>
+                )}
               </div>
+              {activeDevice && (
+                <div style={{ fontSize: 10, color: '#555', paddingLeft: 4, paddingBottom: 2 }}>
+                  {activeDevice.name}
+                </div>
+              )}
 
               {/* Mono / Stereo */}
               <div className="routing-row routing-type-row">

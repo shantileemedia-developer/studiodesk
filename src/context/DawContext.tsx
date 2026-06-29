@@ -33,6 +33,7 @@ export interface Track {
   versions: TrackVersion[];
   activeVersionId: string;
   inputDeviceId?: string;  // 'default' or a MediaDeviceInfo.deviceId; undefined = use global pref
+  inputChannel?: number;   // 1-indexed physical input channel (1 = Ch 1); undefined = Ch 1
   groupId?: number | null;  // 1-8, null/undefined = no group
   // Folder track hierarchy: null = top-level, non-null = child of that track id
   parentId?: string | null;

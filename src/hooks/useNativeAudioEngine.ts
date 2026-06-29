@@ -771,7 +771,8 @@ export const useNativeAudioEngine = () => {
       await eng()!.startMonitoring(inId, outId);
     }
 
-    await eng()!.startRecording(filePath, inId, outId, 48000, 2, currentTimeRef.current);
+    const inputChOffset = Math.max(0, (armedTrack.inputChannel ?? 1) - 1);
+    await eng()!.startRecording(filePath, inId, outId, 48000, 2, currentTimeRef.current, inputChOffset);
 
     // Always call play so the position clock runs and the live waveform draws,
     // even on an empty timeline (specs can be [] for a first-take recording).

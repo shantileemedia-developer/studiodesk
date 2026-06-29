@@ -619,12 +619,14 @@
 .playhead-marker {
   position: absolute;
   top: 0;
+  left: 0;
   height: 100%;
   width: 1px;
   background-color: #00ffcc;
   z-index: 10;
   cursor: ew-resize;
   box-shadow: 0 0 4px rgba(0, 255, 204, 0.45);
+  will-change: transform;
 }
 
 .playhead-triangle {
@@ -667,12 +669,14 @@
 .playhead-line {
   position: absolute;
   top: 0;
+  left: 0;
   bottom: 0;
   width: 1px;
   background-color: #00ffcc;
   z-index: 10;
   pointer-events: none;
   box-shadow: 0 0 4px rgba(0, 255, 204, 0.35);
+  will-change: transform;
 }
 
 /* ── Magnetic snap guide ──────────────────────────────── */

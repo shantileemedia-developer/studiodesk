@@ -835,7 +835,7 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
           ` cur=${currentTimeRef.current.toFixed(3)}s` +
           ` recStart=${recordingStartTimeRef.current.toFixed(3)}s` +
           ` dur=${recDur.toFixed(3)}s` +
-          ` lineLeft=${playheadLineRef.current?.style.left ?? 'NO_REF'}` +
+          ` lineTransform=${playheadLineRef.current?.style.transform ?? 'NO_REF'}` +
           ` liveW=${liveRegionRef.current?.style.width ?? 'NO_REF(not_armed?)'}` +
           ` rafRunning=true` +
           ` playing=${isPlayingRef.current}` +
@@ -852,14 +852,21 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
         posSnapRef.current  = ipcPos;
         posWallRef.current  = nowMs;
       } else {
-        // Playing — only re-anchor on a seek (jump > 200 ms from predicted position).
+        // Playing — gentle drift correction; hard snap only on a real seek/restart.
         const predicted = posSnapRef.current + (nowMs - posWallRef.current) / 1000;
-        if (Math.abs(ipcPos - predicted) > 0.2) {
+        const drift = ipcPos - predicted;
+
+        if (Math.abs(drift) > 0.5) {
+          // Big jump = seek or stream restart — hard snap
           console.log(
             `[AUDIT][RAF][tick] RE-ANCHOR seek detected ` +
             `ipcPos=${ipcPos.toFixed(4)}s predicted=${predicted.toFixed(4)}s`,
           );
           posSnapRef.current = ipcPos;
+          posWallRef.current = nowMs;
+        } else if (Math.abs(drift) > 0.005) {
+          // Small drift — nudge 10% toward engine position each frame
+          posSnapRef.current = predicted + drift * 0.1;
           posWallRef.current = nowMs;
         }
       }
@@ -868,8 +875,8 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
       const elapsed = playing ? (nowMs - posWallRef.current) / 1000 : 0;
       const t = posSnapRef.current + elapsed;
       const x = t * zoomRef.current * BASE_PX_PER_SEC;
-      if (playheadRulerRef.current) playheadRulerRef.current.style.left = `${x}px`;
-      if (playheadLineRef.current)  playheadLineRef.current.style.left  = `${x}px`;
+      if (playheadRulerRef.current) playheadRulerRef.current.style.transform = `translateX(${x}px)`;
+      if (playheadLineRef.current)  playheadLineRef.current.style.transform  = `translateX(${x}px)`;
 
       // Time readout on the playhead handle (#6 transport sync / visual component)
       if (playheadTimeDisplayRef.current) {
@@ -1984,7 +1991,7 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
             <span className="project-end-ruler-label">END</span>
           </div>
 
-          <div ref={playheadRulerRef} className="playhead-marker" style={{ left: 0 }}>
+          <div ref={playheadRulerRef} className="playhead-marker">
             <div className="playhead-triangle" />
           </div>
         </div>
@@ -2032,7 +2039,7 @@ const ArrangeWindow = forwardRef<ArrangeWindowHandle, {
         style={{ cursor: TOOL_CURSORS[activeTool] }}
       >
         <div style={{ width: totalWidth, position: 'relative', minHeight: '100%' }}>
-          <div ref={playheadLineRef} className="playhead-line" style={{ left: 0 }} />
+          <div ref={playheadLineRef} className="playhead-line" />
           {snapGuide && (
             <div
               className={`snap-guide snap-guide-${snapGuide.type}`}

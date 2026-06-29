@@ -44,7 +44,7 @@ export interface AudioEngineAPI {
   startRecording(filePath: string, inId?: number, outId?: number, sr?: number, numCh?: number, startDawPos?: number, inputChOffset?: number): Promise<void>;
   stopRecording(): Promise<{ filePath: string; duration: number } | null>;
 
-  startMonitoring(inId?: number, outId?: number, sr?: number, numCh?: number): Promise<void>;
+  startMonitoring(inId?: number, outId?: number, sr?: number, numCh?: number, inputChOffset?: number): Promise<void>;
   stopMonitoring(): Promise<void>;
 
   writeTemp(name: string, data: ArrayBuffer): Promise<string>;

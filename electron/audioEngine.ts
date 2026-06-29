@@ -349,11 +349,12 @@ export class NativeAudioEngine extends EventEmitter {
 
     // ── Callback-addon path (ASIO-grade: atomic seek, Pa_AbortStream on stop) ─
     if (paAddon) {
-      // ASIO is exclusive — if monitoring owns outStream, close it before we open ours.
-      if (this.monitoring && this.inStream && this.outStream) {
-        this.inStream.unpipe(this.outStream);
-        try { this.outStream.quit(); } catch {}
-        this.outStream = null;
+      // ASIO is exclusive — close any naudiodon monitoring streams before paAddon opens.
+      // Do NOT gate on this.inStream: startRecording() already nulled it, so checking
+      // inStream here would leave the outStream alive and block ASIO device acquisition.
+      if (this.monitoring) {
+        if (this.inStream) { try { this.inStream.unpipe(); this.inStream.quit(); } catch {} this.inStream = null; }
+        if (this.outStream) { try { this.outStream.quit(); } catch {} this.outStream = null; }
       }
 
       const startSample = Math.round(startTimeSecs * sr);
@@ -821,12 +822,16 @@ export class NativeAudioEngine extends EventEmitter {
     if (!naudiodon) { this.emit('unavailable'); return; }
     await this.stopRecording();
 
-    // Close any input stream opened by standalone monitoring before we open
-    // the recording stream. Without this, the monitoring inStream is silently
-    // leaked and ASIO would reject the second open on the same device.
+    // Close any naudiodon monitoring streams before PortAudio opens the device.
+    // ASIO is exclusive: if outStream is still alive from monitoring, paAddon
+    // can't open the device even after inStream is closed. Close both.
     if (this.inStream) {
       try { this.inStream.unpipe(); this.inStream.quit(); } catch {}
       this.inStream = null;
+    }
+    if (this.outStream) {
+      try { this.outStream.quit(); } catch {}
+      this.outStream = null;
     }
 
     this.recFilePath      = filePath;
@@ -1006,7 +1011,7 @@ export class NativeAudioEngine extends EventEmitter {
 
   // ── Input monitoring ──────────────────────────────────────────────────────
 
-  async startMonitoring(inDeviceId = -1, outDeviceId = -1, sr = ENGINE_SR, numCh = NUM_CHANNELS) {
+  async startMonitoring(inDeviceId = -1, outDeviceId = -1, sr = ENGINE_SR, numCh = NUM_CHANNELS, inputChOffset = 0) {
     if (!naudiodon || this.monitoring) return;
     this.monitoring = true;
 
@@ -1032,6 +1037,19 @@ export class NativeAudioEngine extends EventEmitter {
       });
       this.inStream.on('data', (chunk: Buffer) => {
         if (this._micBusSubs > 0) this.emit('busChunk', 'mic-input', chunk);
+        // Emit input levels for the selected channel so track meters update.
+        const floatBytes = 4;
+        const frames = chunk.byteLength / (floatBytes * numCh);
+        if (frames < 1) return;
+        const view = new Float32Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / floatBytes);
+        const ch = Math.min(inputChOffset, numCh - 1);
+        let rms = 0;
+        for (let i = 0; i < frames; i++) {
+          const s = view[i * numCh + ch];
+          rms += s * s;
+        }
+        const level = Math.sqrt(rms / frames);
+        this.emit('inputLevels', [level, level]);
       });
       if (!this.outStream) {
         this.outStream = new naudiodon.AudioIO({

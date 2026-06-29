@@ -551,12 +551,14 @@ export const useNativeAudioEngine = () => {
 
   useEffect(() => {
     if (!nativeAvailableRef.current || !eng()) return;
-    const hasMonitorTrack = state.tracks.some(t => t.isMonitoring);
-    if (hasMonitorTrack && !monitoringActiveRef.current) {
+    const monitorTrack = state.tracks.find(t => t.isMonitoring);
+    if (monitorTrack && !monitoringActiveRef.current) {
       monitoringActiveRef.current = true;
       const prefs = loadAudioPrefs();
-      eng()!.startMonitoring(prefs.nativeInputDeviceId, prefs.nativeOutputDeviceId).catch(() => {});
-    } else if (!hasMonitorTrack && monitoringActiveRef.current) {
+      const inputChOffset = Math.max(0, (monitorTrack.inputChannel ?? 1) - 1);
+      const numCh = Math.max(2, inputChOffset + 1);
+      eng()!.startMonitoring(prefs.nativeInputDeviceId, prefs.nativeOutputDeviceId, 48000, numCh, inputChOffset).catch(() => {});
+    } else if (!monitorTrack && monitoringActiveRef.current) {
       monitoringActiveRef.current = false;
       eng()!.stopMonitoring().catch(() => {});
     }
@@ -652,6 +654,7 @@ export const useNativeAudioEngine = () => {
     dispatch({ type: 'SET_RECORDING', payload: false });
 
     await eng()?.stopMonitoring();
+    monitoringActiveRef.current = false; // let the monitoring effect restart if a track still has isMonitoring=true
     const result = await eng()?.stopRecording();
     if (!result) { console.log('[REC ERROR] stopRecording returned no result'); return; }
 
@@ -768,7 +771,9 @@ export const useNativeAudioEngine = () => {
 
     if (armedTrack.isMonitoring) {
       monitoringActiveRef.current = true;
-      await eng()!.startMonitoring(inId, outId);
+      const inputChOffset = Math.max(0, (armedTrack.inputChannel ?? 1) - 1);
+      const numCh = Math.max(2, inputChOffset + 1);
+      await eng()!.startMonitoring(inId, outId, 48000, numCh, inputChOffset);
     }
 
     const inputChOffset = Math.max(0, (armedTrack.inputChannel ?? 1) - 1);

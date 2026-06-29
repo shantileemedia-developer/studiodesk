@@ -48,25 +48,33 @@ function generateSessionCode(): string {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props) {
+  // Scope every localStorage key to this user so accounts don't bleed into each other.
+  const K = {
+    room:    `sl_room_${userId}`,
+    granted: `sl_ec_granted_${userId}`,
+    clients: `sl_clients_${userId}`,
+    history: `sl_session_history_${userId}`,
+  };
+
   const [phase, setPhase] = useState<Phase>(() => {
-    const room    = localStorage.getItem('sl_room');
-    const granted = localStorage.getItem('sl_ec_granted');
+    const room    = localStorage.getItem(K.room);
+    const granted = localStorage.getItem(K.granted);
     if (room && granted) return 'daw-active';
     if (room) return 'waiting';
     return 'dashboard';
   });
-  const [roomCode, setRoomCode]                   = useState<string | null>(() => localStorage.getItem('sl_room'));
+  const [roomCode, setRoomCode]                   = useState<string | null>(() => localStorage.getItem(K.room));
   const [artist, setArtist]                       = useState<ArtistPresence | null>(null);
   const [copied, setCopied]                       = useState(false);
   const [joinInput, setJoinInput]                 = useState('');
-  const [dawControlGranted, setDawControlGranted] = useState(() => !!localStorage.getItem('sl_ec_granted'));
+  const [dawControlGranted, setDawControlGranted] = useState(() => !!localStorage.getItem(K.granted));
   const [activeTab, setActiveTab]                 = useState<Tab>('sessions');
   const [clients, setClients]                     = useState<Client[]>(() => {
-    try { return JSON.parse(localStorage.getItem('sl_clients') ?? '[]'); }
+    try { return JSON.parse(localStorage.getItem(K.clients) ?? '[]'); }
     catch { return []; }
   });
   const [sessionHistory, setSessionHistory]       = useState<SessionHistoryEntry[]>(() => {
-    try { return JSON.parse(localStorage.getItem('sl_session_history') ?? '[]'); }
+    try { return JSON.parse(localStorage.getItem(K.history) ?? '[]'); }
     catch { return []; }
   });
   const [showAddClient, setShowAddClient] = useState(false);
@@ -81,14 +89,14 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
   useEffect(() => {
-    localStorage.setItem('sl_clients', JSON.stringify(clients));
+    localStorage.setItem(K.clients, JSON.stringify(clients));
   }, [clients]);
 
   // ── Session lifecycle ───────────────────────────────────────────────────────
 
   const startSession = useCallback((code: string) => {
     setRoomCode(code);
-    localStorage.setItem('sl_room', code);
+    localStorage.setItem(K.room, code);
     setPhase('waiting');
     setArtist(null);
     setDawControlGranted(false);
@@ -97,14 +105,14 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
     setSessionHistory(prev => {
       const entry: SessionHistoryEntry = { code, createdAt: new Date().toISOString() };
       const deduped = [entry, ...prev.filter(e => e.code !== code)].slice(0, 10);
-      localStorage.setItem('sl_session_history', JSON.stringify(deduped));
+      localStorage.setItem(K.history, JSON.stringify(deduped));
       return deduped;
     });
   }, []);
 
   const endSession = useCallback(() => {
-    localStorage.removeItem('sl_room');
-    localStorage.removeItem('sl_ec_granted');
+    localStorage.removeItem(K.room);
+    localStorage.removeItem(K.granted);
     setRoomCode(null);
     setArtist(null);
     setPhase('dashboard');
@@ -143,13 +151,13 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
 
   const clearSessionHistory = useCallback(() => {
     setSessionHistory([]);
-    localStorage.removeItem('sl_session_history');
+    localStorage.removeItem(K.history);
   }, []);
 
   const deleteSessionHistoryEntry = useCallback((code: string) => {
     setSessionHistory(prev => {
       const updated = prev.filter(e => e.code !== code);
-      localStorage.setItem('sl_session_history', JSON.stringify(updated));
+      localStorage.setItem(K.history, JSON.stringify(updated));
       return updated;
     });
   }, []);
@@ -196,7 +204,7 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
 
     ch.on('broadcast', { event: 'daw-control-granted' }, () => {
       // Artist granted DAW control via unified modal inside DawWorkspace
-      localStorage.setItem('sl_ec_granted', JSON.stringify({
+      localStorage.setItem(K.granted, JSON.stringify({
         dawControl: true,
         grantedAt: new Date().toISOString(),
         sessionId: roomCode,
@@ -205,7 +213,7 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
     });
 
     ch.on('broadcast', { event: 'daw-control-revoked' }, () => {
-      localStorage.removeItem('sl_ec_granted');
+      localStorage.removeItem(K.granted);
       setDawControlGranted(false);
       setPhase(phaseRef.current === 'daw-active'
         ? (artist ? 'connected' : 'waiting')
@@ -228,14 +236,14 @@ export default function EngineerConsole({ userId, isAdmin, onOpenAdmin }: Props)
   // ── DAW-Active ─────────────────────────────────────────────────────────────
 
   const handleArtistLeft = useCallback(() => {
-    localStorage.removeItem('sl_ec_granted');
+    localStorage.removeItem(K.granted);
     setDawControlGranted(false);
     setArtist(null);
     setPhase('waiting');
   }, []);
 
   const handleExitDawControl = useCallback(() => {
-    localStorage.removeItem('sl_ec_granted');
+    localStorage.removeItem(K.granted);
     setDawControlGranted(false);
     controlChannelRef.current?.send({
       type: 'broadcast',

@@ -632,17 +632,13 @@ export const useNativeAudioEngine = () => {
     currentTimeRef.current = clamped;
     dispatch({ type: 'SET_CURRENT_TIME', payload: clamped });
     await eng()?.seek(clamped);
-    if (isPlayingRef.current) {
-      const specs = await buildSpecs(clamped);
-      const prefs = loadAudioPrefs();
-      if (state.transport.metronomeOn) startMetronome(getAudioCtx(), clamped);
-      await eng()!.play(
-        specs, clamped,
-        prefs.nativeOutputDeviceId !== -1 ? prefs.nativeOutputDeviceId : undefined,
-        48000,
-      );
+    // Do NOT call play() — audioEngine.seek() stores seekTarget atomically and
+    // paCallback picks it up on the next buffer without restarting the stream.
+    // Only restart the metronome scheduler from the new position.
+    if (isPlayingRef.current && state.transport.metronomeOn) {
+      startMetronome(getAudioCtx(), clamped);
     }
-  }, [buildSpecs, currentTimeRef, dispatch, getAudioCtx, startMetronome, state.transport.metronomeOn]);
+  }, [currentTimeRef, dispatch, getAudioCtx, startMetronome, state.transport.metronomeOn]);
 
   // ── Recording ──────────────────────────────────────────────────────────────
 

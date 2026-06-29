@@ -11,7 +11,8 @@ const CLICK_INTERVAL_MS = 25;    // scheduler polling interval (ms)
 const pendingRetryBlobs = new Map<string, Blob>();
 
 
-export const useAudioEngine = () => {
+export const useAudioEngine = (opts?: { enabled?: boolean }) => {
+  const enabled = opts?.enabled !== false;
   const { state, dispatch, currentTimeRef, audioCtxRef, recordingStartTimeRef, livePeaksRef, trackAnalysersRef, trackGainsRef, trackPannersRef, masterGainRef, masterAnalyserRef, userRole, masterStreamRef, audioDirHandle, retryUploadRef, meterValuesRef } = useDaw();
 
   const animFrameRef = useRef<number | null>(null);
@@ -296,6 +297,7 @@ export const useAudioEngine = () => {
   }, [meterValuesRef]);
 
   const play = useCallback(async () => {
+    if (!enabled) return;
     try {
     const ctx = getAudioCtx();
     if (!ctx) return;
@@ -599,6 +601,7 @@ export const useAudioEngine = () => {
 
   // Pause: halt playback but keep the playhead position
   const pause = useCallback(() => {
+    if (!enabled) return;
     ++playIdRef.current;
     stopAnimLoop();
     stopSources();
@@ -609,6 +612,7 @@ export const useAudioEngine = () => {
 
   // Stop: halt playback AND return to zero
   const stop = useCallback(() => {
+    if (!enabled) return;
     ++playIdRef.current;
     stopAnimLoop();
     stopSources();
@@ -621,6 +625,7 @@ export const useAudioEngine = () => {
   }, [stopAnimLoop, stopSources, stopMetronome, stopRecordingSession, dispatch, currentTimeRef]);
 
   const record = useCallback(async () => {
+    if (!enabled) return;
     if (userRole === 'engineer') {
       const ctx = getAudioCtx();
       playStartAudioTimeRef.current = ctx.currentTime;
@@ -1049,6 +1054,7 @@ export const useAudioEngine = () => {
 
   // Seek during playback: tear down current sources and restart from new position
   const seek = useCallback(async (t: number) => {
+    if (!enabled) return;
     const wasPlaying = state.transport.isPlaying;
     currentTimeRef.current = Math.max(0, t);
     dispatch({ type: 'SET_CURRENT_TIME', payload: Math.max(0, t) });
@@ -1065,6 +1071,7 @@ export const useAudioEngine = () => {
   // Pre-warm the decode cache whenever regions change so the first play is instant.
   // Runs in the background — never blocks the UI or delays play().
   useEffect(() => {
+    if (!enabled) return;
     const urls = [...new Set(
       state.regions
         .filter(r => r.audioUrl && !bufferCacheRef.current.has(r.audioUrl))

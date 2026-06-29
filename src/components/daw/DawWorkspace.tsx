@@ -92,7 +92,8 @@ const DawWorkspace: React.FC<DawWorkspaceProps> = ({ userRole, userId, roomCode,
   const arrangeRef       = useRef<ArrangeWindowHandle>(null);
   const rcActiveRef      = useRef(false);
   const lastViewSyncRef  = useRef(0);
-  const webAudio   = useAudioEngine();
+  // Disable Web Audio when the native preload bridge is present — only one engine active at a time
+  const webAudio   = useAudioEngine({ enabled: !window.audioEngine });
   const nativeAudio = useNativeAudioEngine();
   // Use native engine when available; fall back to Web Audio API
   const { play, pause, stop, record, seek } = nativeAudio.nativeAvailable ? nativeAudio : webAudio;

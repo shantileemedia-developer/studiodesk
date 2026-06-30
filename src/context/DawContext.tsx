@@ -1,6 +1,14 @@
 import React, { createContext, useContext, useReducer, useRef, useCallback } from 'react';
 import type { AudioEngineError } from '../types/audioErrors';
 
+export interface CountInState {
+  startAt:     number;              // performance.now() at count-in start
+  totalMs:     number;              // total count-in duration in ms
+  countInBars: number;
+  tempo:       number;
+  timeSig:     [number, number];
+}
+
 export interface MeterValue {
   L: number;       // instantaneous peak dBFS, floor = -90
   R: number;
@@ -262,7 +270,7 @@ export const initialState: DawState = {
     punchIn: null,
     punchOut: null,
     metronomeOn: false,
-    countInBars: 0,
+    countInBars: 2,
     engineState: 'stopped',
   },
 };
@@ -803,6 +811,7 @@ interface DawContextValue {
 
   meterValuesRef: React.MutableRefObject<Record<string, MeterValue>>;
   clearMeterClip: (id: string) => void;
+  countInRef: React.MutableRefObject<CountInState | null>;
 }
 
 interface DawProviderProps {
@@ -839,6 +848,7 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
   );
   const retryUploadRef = useRef<((poolItemId: string) => void) | null>(null);
   const meterValuesRef = useRef<Record<string, MeterValue>>({});
+  const countInRef     = useRef<CountInState | null>(null);
   const clearMeterClip = useCallback((id: string) => {
     const v = meterValuesRef.current[id];
     if (v) { v.clipL = false; v.clipR = false; }
@@ -863,6 +873,7 @@ export const DawProvider: React.FC<DawProviderProps> = ({ children, userRole }) 
       projectFilePath, setProjectFilePath, audioDirPath, setAudioDirPath,
       retryUploadRef,
       meterValuesRef, clearMeterClip,
+      countInRef,
     }}>
       {children}
     </DawContext.Provider>

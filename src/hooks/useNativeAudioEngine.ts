@@ -84,6 +84,7 @@ export const useNativeAudioEngine = (roomCode = '') => {
     recordingStartTimeRef,
     nativeMasterLevelsRef,
     meterValuesRef,
+    countInRef,
     userRole,
   } = useDaw();
 
@@ -143,8 +144,9 @@ export const useNativeAudioEngine = (roomCode = '') => {
   const loopEndRef    = useRef(state.transport.loopEnd);
   const tempoRef      = useRef(state.transport.tempo);
   const timeSigRef    = useRef(state.transport.timeSignature);
-  const isPlayingRef  = useRef(false);
-  const isRecordingRef = useRef(false);
+  const isPlayingRef    = useRef(false);
+  const isRecordingRef  = useRef(false);
+  const countInAbortRef = useRef(false);
 
   useEffect(() => { isLoopingRef.current = state.transport.isLooping; }, [state.transport.isLooping]);
   useEffect(() => { loopStartRef.current = state.transport.loopStart; }, [state.transport.loopStart]);
@@ -723,6 +725,8 @@ export const useNativeAudioEngine = (roomCode = '') => {
     isStallRef.current     = false;
     punchArmedRef.current  = false;
     punchWritingRef.current = false;
+    countInAbortRef.current = true;
+    countInRef.current      = null;
     stopAnimLoop();
     stopMetronome();
     dispatch({ type: 'SET_ENGINE_STATE', payload: 'stopping' });
@@ -898,6 +902,7 @@ export const useNativeAudioEngine = (roomCode = '') => {
     recordingStartTimeRef.current    = currentTimeRef.current;
     livePeaksRef.current             = [];
     isRecordingNativeRef.current     = true;
+    countInAbortRef.current          = false;
 
     // Subscribe to live waveform peaks from the write thread.
     // Each event delivers new peak values to append; the RAF in ArrangeWindow
@@ -921,11 +926,26 @@ export const useNativeAudioEngine = (roomCode = '') => {
     // Count-in before recording
     const countInBars = state.transport.countInBars;
     if (countInBars > 0) {
-      const beatDur   = 60 / state.transport.tempo;
+      const beatDur  = 60 / state.transport.tempo;
+      const totalMs  = countInBars * state.transport.timeSignature[0] * beatDur * 1000;
       for (let i = 0; i < countInBars * state.transport.timeSignature[0]; i++) {
         scheduleClick(ctx, ctx.currentTime + i * beatDur, i % state.transport.timeSignature[0] === 0);
       }
-      await new Promise<void>(res => setTimeout(res, countInBars * state.transport.timeSignature[0] * beatDur * 1000));
+      countInRef.current = {
+        startAt: performance.now(),
+        totalMs,
+        countInBars,
+        tempo:   state.transport.tempo,
+        timeSig: state.transport.timeSignature as [number, number],
+      };
+      await new Promise<void>(res => setTimeout(res, totalMs));
+      countInRef.current = null;
+      if (countInAbortRef.current) {
+        isRecordingNativeRef.current = false;
+        unsubRecProgressRef.current?.();
+        unsubRecProgressRef.current = null;
+        return;
+      }
     }
 
     const filePath = await eng()!.getTakePath(takeName);

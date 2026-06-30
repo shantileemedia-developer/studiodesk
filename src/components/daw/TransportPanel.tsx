@@ -4,6 +4,7 @@ import {
   Activity, LayoutPanelLeft, LayoutPanelTop, PanelRight, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { useDaw } from '../../context/DawContext';
+import type { CountInState } from '../../context/DawContext';
 import './TransportPanel.css';
 
 const SIG_NUMERATORS   = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
@@ -173,19 +174,40 @@ const formatTime = (s: number): string => {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
 };
 
-const toBarsBeats = (seconds: number, tempo: number): string => {
+const toBarsBeats = (seconds: number, tempo: number, beatsPerBar: number): string => {
   const totalBeats = seconds * (tempo / 60);
-  const bar   = Math.floor(totalBeats / 4) + 1;
-  const beat  = Math.floor(totalBeats % 4) + 1;
-  const tick  = Math.floor((totalBeats % 1) * 240);
-  return `${String(bar).padStart(3,' ')}.${beat}.1.${String(tick).padStart(3,'0')}`;
+  const bar  = Math.floor(totalBeats / beatsPerBar) + 1;
+  const beat = Math.floor(totalBeats % beatsPerBar) + 1;
+  const sub  = Math.floor((totalBeats % 1) * 4) + 1;
+  const tick = Math.floor(((totalBeats * 4) % 1) * 240);
+  return `${String(bar).padStart(3,' ')}.${beat}.${sub}.${String(tick).padStart(3,'0')}`;
+};
+
+const formatTimeNeg = (remainSec: number): string => {
+  const s  = Math.max(0, remainSec);
+  const h  = Math.floor(s / 3600);
+  const m  = Math.floor((s % 3600) / 60);
+  const ss = Math.floor(s % 60);
+  const ms = Math.floor((s % 1) * 1000);
+  return `-${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+};
+
+const toCountInBarsBeats = (elapsedMs: number, ci: CountInState): string => {
+  const bpb          = ci.timeSig[0];
+  const elapsedBeats = (elapsedMs / 1000) * (ci.tempo / 60);
+  const barFromStart = Math.floor(elapsedBeats / bpb);
+  const barDisplay   = -(ci.countInBars - barFromStart);
+  const beat         = Math.floor(elapsedBeats % bpb) + 1;
+  const sub          = Math.floor((elapsedBeats % 1) * 4) + 1;
+  const tick         = Math.floor(((elapsedBeats * 4) % 1) * 240);
+  return `${String(barDisplay).padStart(3,' ')}.${beat}.${sub}.${String(tick).padStart(3,'0')}`;
 };
 
 const TransportPanel: React.FC<TransportPanelProps> = ({
   toggleInspector, toggleMixer, toggleMediaPool, onPlay, onStop, onReturnToZero, onRecord, onStopRecording,
   userRole, isReceiving = false,
 }) => {
-  const { state, dispatch, currentTimeRef } = useDaw();
+  const { state, dispatch, currentTimeRef, countInRef } = useDaw();
   const { isPlaying, isRecording, currentTime, tempo, timeSignature, isLooping } = state.transport;
 
   const timeDisplayRef = useRef<HTMLDivElement>(null);
@@ -212,15 +234,25 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
   // Update time display at 60fps via direct DOM — no React re-renders
   useEffect(() => {
     const tick = () => {
-      if (timeDisplayRef.current)
-        timeDisplayRef.current.textContent = formatTime(currentTimeRef.current);
-      if (barsDisplayRef.current)
-        barsDisplayRef.current.textContent = toBarsBeats(currentTimeRef.current, tempo);
+      const ci = countInRef.current;
+      if (ci) {
+        const elapsed = performance.now() - ci.startAt;
+        const remain  = Math.max(0, ci.totalMs - elapsed) / 1000;
+        if (timeDisplayRef.current)
+          timeDisplayRef.current.textContent = formatTimeNeg(remain);
+        if (barsDisplayRef.current)
+          barsDisplayRef.current.textContent = toCountInBarsBeats(elapsed, ci);
+      } else {
+        if (timeDisplayRef.current)
+          timeDisplayRef.current.textContent = formatTime(currentTimeRef.current);
+        if (barsDisplayRef.current)
+          barsDisplayRef.current.textContent = toBarsBeats(currentTimeRef.current, tempo, timeSignature[0]);
+      }
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [currentTimeRef, tempo]);
+  }, [currentTimeRef, countInRef, tempo]);
 
   return (
     <div className="transport-panel">
@@ -285,7 +317,7 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
         {/* Time display — direct DOM updates at 60fps */}
         <div className="transport-section time-display">
           <div className="time-primary" ref={timeDisplayRef}>{formatTime(currentTime)}</div>
-          <div className="time-secondary" ref={barsDisplayRef}>{toBarsBeats(currentTime, tempo)}</div>
+          <div className="time-secondary" ref={barsDisplayRef}>{toBarsBeats(currentTime, tempo, timeSignature[0])}</div>
         </div>
 
         {/* Tempo & Signature */}
@@ -326,7 +358,7 @@ const TransportPanel: React.FC<TransportPanelProps> = ({
               {state.transport.metronomeOn ? 'ON' : 'OFF'}
             </span>
           </div>
-          <div className={`tempo-box click-box ${state.transport.countInBars > 0 ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_COUNT_IN', payload: state.transport.countInBars === 0 ? 1 : 0 })} style={{ cursor: 'pointer' }}>
+          <div className={`tempo-box click-box ${state.transport.countInBars > 0 ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_COUNT_IN', payload: state.transport.countInBars === 0 ? 2 : 0 })} style={{ cursor: 'pointer' }}>
             <span className="label">COUNT</span>
             <span className="value">
               {state.transport.countInBars > 0 ? `${state.transport.countInBars}B` : 'OFF'}

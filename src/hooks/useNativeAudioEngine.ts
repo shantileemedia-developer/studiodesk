@@ -421,7 +421,7 @@ export const useNativeAudioEngine = () => {
       currentTimeRef.current = t;
 
       // ── Auto-stop at project end ──────────────────────────────────────────
-      if (!isLoopingRef.current && t >= projectEndRef.current && isPlayingRef.current) {
+      if (!isLoopingRef.current && !isRecordingRef.current && t >= projectEndRef.current && isPlayingRef.current) {
         isPlayingRef.current = false;
         stopAnimLoop();
         stopMetronome();
